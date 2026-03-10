@@ -1,53 +1,136 @@
 # Learning Browser — Cockpit Plugin
 
-Persistent browser research sessions using [agent-browser](https://github.com/anthropics/agent-browser), customized per cockpit.
+Persistent browser memory for AI agents. The browser gets smarter every time it visits a site.
 
-## Plugin Pattern
+## How It Works
 
-This is a **plugin**, not a built-in. Each cockpit forks this directory and customizes it for their domain:
+Three operations, all file-based:
 
-- A finance cockpit bookmarks bank portals and stores categorization learnings
-- A security cockpit maintains authenticated sessions to vulnerability databases
-- A planning cockpit researches vendors and stores competitive intel
+### 1. Query (before acting)
 
-The plugin provides the skeleton. You fill in the domain knowledge.
+Before navigating any site, check what you already know:
+
+```
+Read files in tools/learning-browser/sites/<domain>/
+```
+
+If files exist, you've been here before. Read them. Act on what you know instead of fumbling through the UI again.
+
+### 2. Ingest (after success)
+
+When you figure out how to do something on a site, write it down:
+
+```
+tools/learning-browser/sites/chase.com/download-statements.md
+```
+
+One file per learned action. Contains: what you did, what worked, what to watch out for, when you learned it.
+
+### 3. Consolidate (on /land or periodically)
+
+Review site learnings. Merge redundant ones. Flag stale ones (sites change). Generate cross-site insights ("all bank portals require dismissing a cookie modal first").
+
+Written to `tools/learning-browser/insights/`.
+
+## File Structure
+
+```
+tools/learning-browser/
+├── README.md
+├── sites/                     # One folder per domain
+│   ├── chase.com/
+│   │   ├── login.md           # How login works (modals, 2FA flow)
+│   │   ├── download-statements.md
+│   │   └── check-balance.md
+│   ├── wellsfargo.com/
+│   │   ├── login.md
+│   │   └── download-statements.md
+│   └── mercury.com/
+│       └── export-transactions.md
+├── insights/                  # Cross-site consolidated knowledge
+│   ├── bank-portals.md        # "All banks require modal dismissal"
+│   └── download-patterns.md   # "PDFs usually behind shadow DOM"
+└── .profile/                  # Browser profile (gitignored)
+```
+
+## Memory File Format
+
+Each file in `sites/<domain>/` follows this structure:
+
+```markdown
+# <Action Name>
+**Site:** <domain>
+**Last verified:** <date>
+**Confidence:** high | medium | low
+
+## Steps
+1. <what to do first>
+2. <what to do next>
+3. ...
+
+## Selectors / Landmarks
+- Login button: `@ref` or CSS selector or text content
+- Statement link: description of where it lives in the page
+
+## Gotchas
+- <thing that tripped you up>
+- <thing that changed since last time>
+
+## History
+- <date>: Learned initial flow
+- <date>: Nav changed, updated step 3
+```
+
+## The Loop
+
+This is the discipline. Every browser interaction follows it:
+
+```
+QUERY   → ls sites/<domain>/ — do I know this site?
+          YES → read the relevant file, follow it
+          NO  → explore carefully, take snapshots
+
+ACT     → do the thing using agent-browser
+
+INGEST  → did I learn something new?
+          YES → write/update a file in sites/<domain>/
+          NO  → move on
+
+(on /land or when idle)
+CONSOLIDATE → review recent learnings
+              merge duplicates
+              flag anything older than 30 days as "needs reverify"
+              write cross-site insights
+```
 
 ## Setup
 
-1. **Install agent-browser** globally (`npm i -g @anthropic/agent-browser`)
-2. **Create profile**: `mkdir -p .agent-browser-profile && echo ".agent-browser-profile/" >> .gitignore`
-3. **Add to CLAUDE.md** — tell the cockpit how to use it (see below)
+1. Install agent-browser: `npm i -g @anthropic/agent-browser`
+2. Create profile: `mkdir -p tools/learning-browser/.profile`
+3. Gitignore the profile: `echo "tools/learning-browser/.profile/" >> .gitignore`
+4. Add the CLAUDE.md block below
 
 ## CLAUDE.md Addition
 
 ```markdown
-## Browser Research
-- **ALWAYS use `agent-browser` CLI via Bash** for web research
-- Profile: `--profile <cockpit-root>/.agent-browser-profile --headed`
-- First call: include `--profile` and `--headed` (daemon remembers until `close`)
-- Commands: `open <url>`, `snapshot -i`, `click @ref`, `fill @ref "text"`, `screenshot [path]`, `close`
+## Browser Memory
+- Before ANY browser navigation: check `tools/learning-browser/sites/<domain>/` for prior knowledge
+- After figuring out a site interaction: write the pattern to `sites/<domain>/<action>.md`
+- Use `agent-browser` with `--profile tools/learning-browser/.profile --headed`
+- On /land: consolidate recent browser learnings if any new ones were written
 ```
 
-## Persistent Sessions
+## Why Files
 
-The agent-browser daemon stays alive until `close` is called. Cookies persist in the profile directory.
-
-- **Don't call `close`** unless you're done with that site
-- **Next session**: `agent-browser snapshot -i` to see where you left off
-- **After machine restart**: re-open with `--profile` — cookies restore most sessions
-- **For 2FA sites**: log in manually once, the profile remembers
+- `git diff` shows exactly what the browser learned
+- Move a learning to another cockpit: copy the file
+- Delete a bad learning: delete the file
+- Review what the browser knows: `ls sites/`
+- No database, no embeddings, no infrastructure
+- The LLM reads the files directly — it IS the retrieval engine
 
 ## Customization
 
-Fork this directory and add:
+Each cockpit forks this plugin and grows its own site knowledge. A finance cockpit learns bank portals. A security cockpit learns vulnerability databases. A planning cockpit learns vendor sites.
 
-```
-tools/learning-browser/
-├── README.md              ← customize for your domain
-├── sites.md               ← bookmarked sites + login notes (gitignored if sensitive)
-└── learnings/             ← research findings stored as markdown
-    ├── 2026-03-10-banks.md
-    └── ...
-```
-
-The `learnings/` directory is yours. Store whatever your domain needs — research notes, screenshots, competitive analysis, vendor comparisons.
+The `sites/` directory is the cockpit's browser muscle memory.
