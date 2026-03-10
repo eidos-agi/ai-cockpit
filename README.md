@@ -42,6 +42,7 @@ claude
 | `/land` | End of session | Capture outcomes, blockers, next actions, write bookmark |
 | `/cockpit-status` | Anytime | Show active workstreams, blockers, ages, who owes what |
 | `/cockpit-repair` | When things break | Validate state files, find corruption, offer fixes |
+| `/clean-sweep` | Workspace behind | Commit, push, build, test all repos in one sweep |
 
 ### State Management
 
@@ -57,13 +58,48 @@ your-cockpit/
 │       ├── takeoff/              # Boot sequence (from template)
 │       ├── land/                 # Park sequence (from template)
 │       ├── cockpit-status/       # Instrument panel (from template)
-│       ├── pre-flight/            # Situational scan (from template)
+│       ├── pre-flight/           # Situational scan (from template)
 │       ├── cockpit-repair/       # Diagnostics (from template)
+│       ├── clean-sweep/          # Workspace sweep (from template)
 │       └── your-domain-skill/    # Your additions
+├── tools/
+│   └── learning-browser/         # Persistent browser research (from template)
+├── bin/
+│   └── update-from-template      # Pull skill updates from upstream
+├── skills_manifest.json           # SHA256 hashes for update tracking
 ├── state.json                    # Session state & watermarks
 ├── CLAUDE.md                     # Role context + instructions
 └── ...                           # Your domain-specific structure
 ```
+
+## Fleet Sync (opt-in)
+
+For multi-repo organizations, `/takeoff` can sync your entire fleet before boot. Add these fields to `state.json`:
+
+```json
+{
+  "cockpit": {
+    "org": "your-github-org",
+    "repos_dir": "~/repos-your-org"
+  },
+  "fleet": {
+    "project-a": { "display_name": "Project A" },
+    "project-b": { "display_name": "Project B" }
+  },
+  "pilots": {
+    "alice": { "git_names": ["Alice Smith", "alice"], "git_emails": ["alice@example.com"] },
+    "bob": { "git_names": ["Bob Jones"], "git_emails": ["bob@example.com"] }
+  }
+}
+```
+
+When configured, `/takeoff` will:
+1. Discover repos via `gh repo list <org>`
+2. Fetch and pull all local fleet repos
+3. Build a pilot activity map (who committed where in the last 7 days)
+4. Surface fleet health in the terminal, takeoff.md, and cockpit.html
+
+**Single-repo cockpits** (no `org` or `repos_dir`) skip fleet sync entirely — no config needed.
 
 ## Design Principles
 

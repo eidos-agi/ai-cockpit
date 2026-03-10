@@ -1,7 +1,11 @@
 {
-  "version": "v1.2.1",
-  "generated": "2026-02-26T08:59:10Z",
+  "version": "v1.3.0",
+  "generated": "2026-03-10T15:24:00Z",
   "skills": {
+    "clean-sweep/skill.md": {
+      "path": ".claude/skills/clean-sweep/skill.md",
+      "sha256": "99e8444f7757188b66661b56dfe2f08fe7ea6dc1b9292a108e2be4725477537e"
+    },
     "cockpit-repair/skill.md": {
       "path": ".claude/skills/cockpit-repair/skill.md",
       "sha256": "53ae67b9b5026e02650cff8c4083c6cff1e8b763dbb4fc5fc0d2498541938b5c"
@@ -16,15 +20,15 @@
     },
     "pre-flight/skill.md": {
       "path": ".claude/skills/pre-flight/skill.md",
-      "sha256": "33cb576e5b8df93f92efa3da6942f02a931fa1fc319e59a9ada5caad31dc352d"
+      "sha256": "fde8a5371c18ada10e1550ee4801722111ae9d69830643debcc0f4c8429b60b0"
     },
     "takeoff/cockpit-template.html": {
       "path": ".claude/skills/takeoff/cockpit-template.html",
-      "sha256": "fdff7483221d35ecefbb989d0c48561f32cb80d8c82e9b73105a31576681c461"
+      "sha256": "168bf9f1de8357b2396f3489e5d326afe5becde57329ce98e91d164c20d6106b"
     },
     "takeoff/skill.md": {
       "path": ".claude/skills/takeoff/skill.md",
-      "sha256": "fb4e605d0e92c9f07380e6c9069c8f2b68e9f1890214ebaeba61e08bfa82391d"
+      "sha256": "e1159ac8e843ed871546457e0de4a9f72b31bafa4a523c1e0e9cbe7e19356ebe"
     }
   }
 }

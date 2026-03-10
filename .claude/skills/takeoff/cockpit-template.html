@@ -145,6 +145,78 @@
     }
     .section li:last-child { margin-bottom: 0; }
 
+    /* Fleet dashboard */
+    .fleet {
+      background: var(--surface);
+      border-radius: 8px;
+      padding: 1.5rem;
+      margin-bottom: 1.5rem;
+      border-left: 3px solid var(--primary);
+    }
+    .fleet h2 {
+      font-size: 0.8125rem;
+      text-transform: uppercase;
+      letter-spacing: 0.15em;
+      color: var(--primary);
+      margin-bottom: 1rem;
+      font-weight: 700;
+    }
+    .fleet-summary {
+      font-size: 0.875rem;
+      color: var(--muted);
+      margin-bottom: 1rem;
+    }
+    .fleet-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.875rem;
+      font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', monospace;
+      margin-bottom: 1.25rem;
+    }
+    .fleet-table th {
+      text-align: left;
+      font-size: 0.6875rem;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--muted);
+      padding: 0.5rem 0.75rem;
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+    }
+    .fleet-table td {
+      padding: 0.5rem 0.75rem;
+      border-bottom: 1px solid rgba(255,255,255,0.03);
+    }
+    .fleet-status { font-weight: 600; }
+    .fleet-status.synced { color: var(--primary); }
+    .fleet-status.ahead { color: var(--warning); }
+    .fleet-status.dirty { color: var(--warning); }
+    .fleet-status.diverged { color: var(--danger); }
+    .fleet-status.new-commits { color: var(--primary); }
+    .fleet-status.remote-only { color: var(--muted); font-style: italic; }
+
+    .pilot-activity {
+      margin-top: 1rem;
+    }
+    .pilot-activity h3 {
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--muted);
+      margin-bottom: 0.5rem;
+      font-weight: 600;
+    }
+    .pilot-activity-item {
+      font-size: 0.875rem;
+      padding: 0.25rem 0;
+    }
+    .pilot-activity-item strong {
+      color: var(--primary);
+    }
+    .pilot-unknown {
+      color: var(--warning);
+      font-style: italic;
+    }
+
     /* Stale marker */
     .stale {
       color: var(--warning);
@@ -211,6 +283,8 @@
   {{DRIFT_SECTION}}
 
   {{RESUME_SECTION}}
+
+  {{FLEET_SECTION}}
 
   <div class="section">
     <h2>Where We Were</h2>
