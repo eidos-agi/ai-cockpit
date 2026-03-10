@@ -10,3 +10,4 @@
 ~/repos-greenmark-waste-solutions/greenmark-director-of-ai-and-technology
 ~/repos-personal/reeves-cockpit
 ~/repos-personal/aic-director-of-ai-cockpit
+~/repos-personal/reeves-finance
