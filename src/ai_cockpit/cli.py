@@ -1344,6 +1344,26 @@ def _check_cockpit_workspace(path):
 
 def cmd_can_i_close(reg, args):
     """Run workspace contract checks across all registered cockpits."""
+    if "--help" in args or "-h" in args:
+        print()
+        print("  \033[1m\033[36mcan-i-close\033[0m — Check if cockpits are safe to close")
+        print()
+        print("  Usage:")
+        print("    cockpit can-i-close            Check all registered cockpits")
+        print("    cockpit can-i-close <name>     Check a specific cockpit")
+        print("    cockpit cic                    Shorthand alias")
+        print()
+        print("  Checks the workspace contract:")
+        print("    - Uncommitted changes")
+        print("    - Unpushed commits")
+        print("    - Merge conflicts")
+        print("    - Staged secrets (.env, credentials, tokens)")
+        print()
+        print("  For the full 20-check audit (session + conversation contracts),")
+        print("  run /can-i-close inside Claude Code.")
+        print()
+        return
+
     cockpits = reg["cockpits"]
 
     # If a specific cockpit is named, check just that one
@@ -1404,6 +1424,26 @@ def cmd_can_i_close(reg, args):
 
 def cmd_touch_and_go(reg, args):
     """Commit and push all dirty registered cockpits."""
+    if "--help" in args or "-h" in args:
+        print()
+        print("  \033[1m\033[36mtouch-and-go\033[0m — Checkpoint all dirty cockpits")
+        print()
+        print("  Usage:")
+        print("    cockpit touch-and-go           Commit & push all dirty cockpits")
+        print("    cockpit touch-and-go <name>    Checkpoint a specific cockpit")
+        print("    cockpit tag                    Shorthand alias")
+        print()
+        print("  For each dirty cockpit:")
+        print("    1. Stages all changes")
+        print("    2. Commits with timestamped message")
+        print("    3. Pushes to remote")
+        print()
+        print("  This is a save point, not a session end.")
+        print("  Inside Claude Code, /touch-and-go also writes bookmarks")
+        print("  and triggers context compaction.")
+        print()
+        return
+
     cockpits = reg["cockpits"]
 
     # If a specific cockpit is named, just that one
