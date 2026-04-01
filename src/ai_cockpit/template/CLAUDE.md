@@ -9,20 +9,25 @@ This is a Claude Code cockpit for **[YOUR ROLE]** at **[YOUR ORG]**.
 
 ## Cockpit Primitives
 
-This workspace uses the AI Cockpit Template. Three skills are always available:
+This workspace uses the AI Cockpit Template. These skills are always available:
 
 | Skill | When | What |
 |-------|------|------|
 | `/takeoff` | Start of session | Boot sequence: bookmark → drift check → priorities → wait |
-| `/land` | End of session | Capture outcomes → write bookmark → clean exit |
+| `/touch-and-go` | Mid-session | Checkpoint: commit, push, bookmark, context compaction — keep flying |
+| `/can-i-close` | Before closing | Audit 3 contracts (workspace, session, conversation) — 20 checks |
+| `/land` | End of session | Park sequence — gated by `/can-i-close`. Commits, pushes, bookmarks. |
 | `/cockpit-status` | Anytime | Active workstreams, blockers, ages, ownership |
 
 ## Session Protocol
 
 1. Every session starts with `/takeoff`
 2. Work using domain-specific skills and tools
-3. Every session ends with `/land`
-4. If a session crashes without `/land`, the next `/takeoff` will detect drift and flag it
+3. Use `/touch-and-go` for mid-session checkpoints (saves state, compacts context)
+4. When ready to stop: `/can-i-close` → fix any BLOCKs → `/land`
+5. If a session crashes without `/land`, the next `/takeoff` will detect drift and flag it
+
+**IMPORTANT:** Do NOT suggest `/land` unprompted. For mid-session saves, use `/touch-and-go`. Only `/land` when the pilot says they're done.
 
 ## State Files
 
