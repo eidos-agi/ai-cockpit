@@ -29,6 +29,17 @@ This workspace uses the AI Cockpit Template. These skills are always available:
 
 **IMPORTANT:** Do NOT suggest `/land` unprompted. For mid-session saves, use `/touch-and-go`. Only `/land` when the pilot says they're done.
 
+## Forge Ecosystem
+
+This cockpit participates in the [Eidos forge ecosystem](https://github.com/eidos-agi/forge-forge). Forges are reusable agent knowledge that can be applied to any project.
+
+**Discovery:** Use the forge-forge MCP server to find forges:
+- `forge_find("test my code")` — find the right forge for a task
+- `forge_how("loss-forge")` — how to use a specific forge
+- `forge_for_project(path=".")` — what forges are recommended for this project
+
+**Provenance:** Check `.forge/installed.yaml` (if it exists) to see which forges have already been applied to this project. Don't re-initialize a forge that's already installed — use its artifacts instead.
+
 ## State Files
 
 - **`state.json`** — Watermarks and counters. Skills read/write this. Committed to git.
