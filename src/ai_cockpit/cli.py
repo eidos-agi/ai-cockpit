@@ -16,6 +16,8 @@ Usage:
     cockpit touch-and-go Commit & push all dirty cockpits (alias: tag)
     cockpit config       Show/edit configuration
     cockpit marketplace  Discover Claude Code plugins
+    cockpit grade        Loss functions + mission scores (loss-forge)
+    cockpit grade --json Machine-readable loss/mission output
     cockpit doctor       Check environment (git, gh, claude, python)
     cockpit version      Show version
 
@@ -1644,6 +1646,13 @@ def _main():
         name = args[1]
         dry_run = "--apply" not in args
         cmd_upgrade(reg, name, dry_run=dry_run)
+    elif command == "grade":
+        from ai_cockpit.loss import compute_all, print_panel
+        if "--json" in args:
+            import json as _json
+            print(_json.dumps(compute_all(), indent=2, default=str))
+        else:
+            print_panel()
     elif command in ("version", "--version", "-V"):
         cmd_version()
     elif command == "doctor":
