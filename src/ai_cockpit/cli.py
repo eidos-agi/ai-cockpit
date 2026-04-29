@@ -140,7 +140,11 @@ def slugify(name):
 
 # ─── Version Detection ────────────────────────────────────
 
-CORE_SKILLS = ["takeoff", "land", "cockpit-status", "pre-flight", "cockpit-repair"]
+CORE_SKILLS = ["takeoff", "land", "cockpit-status", "pre-flight", "cockpit-repair", "clean-sweep"]
+
+# Files at the repo root the cockpit needs in addition to skills, so it can
+# self-update from the template.
+TEMPLATE_AUX_FILES = ("bin/update-from-template", "skills_manifest.json")
 
 
 def detect_capabilities(path):
@@ -238,7 +242,7 @@ def plan_upgrade(path, current_version, target_version):
             })
 
     if current_version < 2 and target_version >= 2:
-        # v1 → v2: add lifecycle skills + visionlog
+        # v1 → v2: add lifecycle skills + visionlog + template self-update wiring
         skills_dir = p / ".claude" / "skills"
         for skill in CORE_SKILLS:
             skill_file = skills_dir / skill / "skill.md"
@@ -249,6 +253,19 @@ def plan_upgrade(path, current_version, target_version):
                     "skill": skill,
                     "path": str(skill_file),
                     "description": f"Install skill: {skill}",
+                })
+
+        # bin/update-from-template + skills_manifest.json — needed for self-update.
+        repo_root = _get_package_repo_root()
+        for rel in TEMPLATE_AUX_FILES:
+            target = p / rel
+            if not target.exists() and repo_root and (repo_root / rel).exists():
+                steps.append({
+                    "version": 2,
+                    "action": "copy_template_file",
+                    "rel": rel,
+                    "path": str(target),
+                    "description": f"Install {rel} from template",
                 })
 
         if not (p / ".visionlog").is_dir():
@@ -279,16 +296,21 @@ def plan_upgrade(path, current_version, target_version):
     return steps
 
 
-def _get_package_skills_dir():
-    """Find the bundled skills directory from the ai-cockpit-template package."""
-    # The package is installed from ai-cockpit-template repo.
-    # Skills live at <repo>/.claude/skills/ relative to the package source.
+def _get_package_repo_root():
+    """Return the ai-cockpit-template repo root if installed editably, else None."""
     pkg_dir = Path(__file__).resolve().parent  # src/ai_cockpit/
     # Walk up: src/ai_cockpit -> src -> repo root
     repo_root = pkg_dir.parent.parent
-    skills_dir = repo_root / ".claude" / "skills"
-    if skills_dir.is_dir():
-        return skills_dir
+    if (repo_root / ".claude" / "skills").is_dir():
+        return repo_root
+    return None
+
+
+def _get_package_skills_dir():
+    """Find the bundled skills directory from the ai-cockpit-template package."""
+    repo_root = _get_package_repo_root()
+    if repo_root:
+        return repo_root / ".claude" / "skills"
     return None
 
 
@@ -321,31 +343,41 @@ startup:
         return True
 
     elif action == "copy_skill":
-        # Copy skill from the ai-cockpit package's bundled skills
+        # Copy whole skill directory (skill.md + auxiliaries like cockpit-template.html)
+        # from the package's bundled skills, falling back to a registered cockpit.
         skill = step["skill"]
-        target = Path(step["path"])
+        target_file = Path(step["path"])  # .../skills/<skill>/skill.md
+        target_dir = target_file.parent
 
-        template_sources = []
-        # First: check the package's own bundled skills
+        candidate_dirs = []
         pkg_skills = _get_package_skills_dir()
         if pkg_skills:
-            template_skills = pkg_skills / skill / "skill.md"
-            template_sources.append(template_skills)
-        # Also check registered cockpits for skill sources
+            candidate_dirs.append(pkg_skills / skill)
         for existing in reg_cockpits:
-            src = Path(existing["path"]) / ".claude" / "skills" / skill / "skill.md"
-            if src.exists():
-                template_sources.append(src)
-                break
+            candidate_dirs.append(Path(existing["path"]) / ".claude" / "skills" / skill)
 
-        for src in template_sources:
-            if src.exists():
-                target.parent.mkdir(parents=True, exist_ok=True)
-                target.write_text(src.read_text())
+        for src_dir in candidate_dirs:
+            if src_dir.is_dir() and (src_dir / "skill.md").exists():
+                target_dir.parent.mkdir(parents=True, exist_ok=True)
+                if target_dir.exists():
+                    shutil.rmtree(target_dir)
+                shutil.copytree(src_dir, target_dir)
                 return True
-        # Create placeholder if no template found
+
+        # No template found anywhere — drop a placeholder so the cockpit still boots.
+        target_dir.mkdir(parents=True, exist_ok=True)
+        target_file.write_text(f"# {skill}\n\nTODO: Configure this skill.\n")
+        return True
+
+    elif action == "copy_template_file":
+        rel = step["rel"]
+        target = Path(step["path"])
+        repo_root = _get_package_repo_root()
+        src = (repo_root / rel) if repo_root else None
+        if not src or not src.exists():
+            return False
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(f"# {skill}\n\nTODO: Configure this skill.\n")
+        shutil.copy2(src, target)
         return True
 
     elif action in ("init_visionlog", "init_research", "init_ike"):

@@ -97,11 +97,12 @@ def test_detect_capabilities_minimal(tmp_path):
 
 
 def test_detect_capabilities_full(tmp_path):
+    from ai_cockpit.cli import CORE_SKILLS
     (tmp_path / "state.json").write_text('{"cockpit": {"name": "test"}}')
     (tmp_path / "CLAUDE.md").write_text("# Test")
     (tmp_path / ".mcp.json").write_text("{}")
     skills_dir = tmp_path / ".claude" / "skills"
-    for skill in ["takeoff", "land", "cockpit-status", "pre-flight", "cockpit-repair"]:
+    for skill in CORE_SKILLS:
         (skills_dir / skill).mkdir(parents=True, exist_ok=True)
         (skills_dir / skill / "skill.md").write_text(f"# {skill}")
     (tmp_path / ".visionlog").mkdir()
