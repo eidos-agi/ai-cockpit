@@ -3,5 +3,5 @@
   "version": "0.1.0",
   "project": "ai-cockpit",
   "created": "2026-04-01",
-  "ike_path": ".ike"
+  "docket_path": ".docket"
 }
