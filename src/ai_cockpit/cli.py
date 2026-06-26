@@ -40,6 +40,17 @@ import traceback
 from datetime import datetime
 from pathlib import Path
 
+from ai_cockpit.launch import (
+    describe_launch,
+    enrich_cockpit_entry,
+    enrich_registry,
+    find_conduit_script,
+    is_local_target,
+    launch_cockpit_entry,
+    registry_hygiene_report,
+    remote_targets,
+)
+
 CRASH_LOG = Path.home() / ".cockpit" / "cockpit-cockpit.log"
 CONFIG_PATH = Path.home() / ".cockpit" / "config.json"
 
@@ -432,27 +443,46 @@ def build_claude_cmd(cockpit, mode=None):
     return cmd, startup.get("command")
 
 
-def launch_cockpit(cockpit, mode=None):
-    """Launch Claude Code in a cockpit directory."""
-    path = cockpit["path"]
-    if not Path(path).exists():
-        print(f"  \033[31mPath missing:\033[0m {path}")
-        sys.exit(1)
+def launch_cockpit(cockpit, mode=None, launch_target=None):
+    """Launch local Claude or remote substrate via conduit."""
+    launch_cockpit_entry(
+        enrich_cockpit_entry(cockpit),
+        mode,
+        launch_target=launch_target,
+        build_claude_cmd=build_claude_cmd,
+    )
 
-    cmd, startup_cmd = build_claude_cmd(cockpit, mode)
 
-    print(f"\n  \033[36m→\033[0m Opening \033[1m{cockpit['name']}\033[0m")
-    print(f"  \033[90m{path}\033[0m")
-    if mode:
-        print(f"  \033[33mMode: {mode}\033[0m")
-    else:
-        print(f"  \033[90mAuto mode: unlocked (Shift+Tab)\033[0m")
-    if startup_cmd:
-        print(f"  \033[90mStartup: {startup_cmd}\033[0m")
-    print()
+def build_tui_nav(cockpits):
+    """Build flat selectable list + section metadata for Local / Remote TUI."""
+    enriched = [enrich_cockpit_entry(c) for c in cockpits]
+    orgs: dict[str, list] = {}
+    for c in enriched:
+        orgs.setdefault(c.get("org", "unknown"), []).append(c)
 
-    os.chdir(path)
-    os.execvp("claude", cmd)
+    selectable = []
+    sections = []  # (kind, org|None, nav_entries)
+
+    for org in sorted(orgs.keys()):
+        org_entries = []
+        for c in sorted(orgs[org], key=lambda x: x["name"]):
+            entry = {"cockpit": c, "launch_target": None, "section": "local"}
+            org_entries.append(entry)
+            selectable.append(entry)
+        sections.append(("org", org, org_entries))
+
+    remote_entries = []
+    for c in enriched:
+        for t in remote_targets(c):
+            remote_entries.append({"cockpit": c, "launch_target": t, "section": "remote"})
+    if remote_entries:
+        remote_entries.sort(
+            key=lambda e: (e["cockpit"]["slug"], e["launch_target"].get("label", ""))
+        )
+        selectable.extend(remote_entries)
+        sections.append(("remote", None, remote_entries))
+
+    return selectable, sections, orgs
 
 
 # ─── TUI ──────────────────────────────────────────────────
@@ -470,14 +500,7 @@ def run_tui(reg):
         print("  No cockpits registered. Run: cockpit scan")
         return
 
-    # Flat ordered list, grouped by org
-    ordered = []
-    orgs = {}
-    for c in cockpits:
-        orgs.setdefault(c.get("org", "unknown"), []).append(c)
-    for org in sorted(orgs.keys()):
-        for c in sorted(orgs[org], key=lambda x: x["name"]):
-            ordered.append(c)
+    ordered, sections, orgs = build_tui_nav(cockpits)
 
     scan_dirs = get_scan_dirs()
 
@@ -528,14 +551,17 @@ def run_tui(reg):
             seen_dirs.add(scan_dir)
 
     selected_cockpit = [None]
+    selected_launch_target = [None]
     selected_mode = [None]
 
     def esc(text):
         return str(text).replace("[", "\\[")
 
-    def build_preview(c):
-        if c is None:
+    def build_preview(entry):
+        if entry is None:
             return ""
+        c = entry["cockpit"] if isinstance(entry, dict) and "cockpit" in entry else entry
+        target = entry.get("launch_target") if isinstance(entry, dict) else None
 
         settings = read_settings(c["path"]) or {}
         claude_cfg = settings.get("claude", {}) if isinstance(settings.get("claude"), dict) else {}
@@ -547,6 +573,20 @@ def run_tui(reg):
         if c.get("description"):
             lines.append(f"[dim]{esc(c['description'])}[/dim]")
         lines.append("")
+        if target and not is_local_target(target):
+            lines.append("[bold magenta]━━ Remote launch ━━[/bold magenta]")
+            lines.append(f"  Substrate   {esc(target.get('label') or target.get('substrate', ''))}")
+            lines.append(f"  Machine     {esc(target.get('machine_id', ''))}")
+            lines.append(f"  Instrument  {esc(target.get('runtime_default', 'grok'))}")
+            if target.get("trust"):
+                lines.append(f"  Trust       {esc(target['trust'])}")
+            lines.append(f"  Remote path {esc(target.get('remote_path', ''))}")
+            conduit = find_conduit_script()
+            if conduit and target.get("machine_id"):
+                from ai_cockpit.launch import conduit_doctor
+                ok = conduit_doctor(target["machine_id"], conduit=conduit)
+                lines.append(f"  Doctor      {'[green]ok[/green]' if ok else '[red]fail[/red]'}")
+            lines.append("")
         lines.append(f"[bold]Path[/bold]   {esc(c['path'])}")
         lines.append(f"[bold]Org[/bold]    {esc(c.get('org', 'unknown'))}")
         lines.append(f"[bold]Slug[/bold]   {esc(c['slug'])}")
@@ -605,11 +645,17 @@ def run_tui(reg):
         if tags and isinstance(tags, list):
             lines.append(f"[bold]Tags[/bold]   {', '.join(str(t) for t in tags)}")
 
-        # Show the claude command that would be built
-        cmd, _ = build_claude_cmd(c)
         lines.append("")
         lines.append("[bold]━━ Launch Command ━━[/bold]")
-        lines.append(f"  [dim]{' '.join(cmd)}[/dim]")
+        if target and not is_local_target(target):
+            try:
+                desc = describe_launch(c, target)
+            except Exception as exc:
+                desc = str(exc)
+            lines.append(f"  [dim]{esc(desc)}[/dim]")
+        else:
+            cmd, _ = build_claude_cmd(c)
+            lines.append(f"  [dim]{' '.join(cmd)}[/dim]")
 
         return "\n".join(lines)
 
@@ -630,20 +676,39 @@ def run_tui(reg):
                 markup=True,
             )
 
+    class RemoteHeader(ListItem):
+        def __init__(self, count, **kwargs):
+            super().__init__(**kwargs)
+            self.remote_count = count
+            self.cockpit_data = None
+
+        def compose(self):
+            yield Static(
+                f"\n [bold]REMOTE[/bold]  [dim]{self.remote_count} launch targets[/dim]",
+                markup=True,
+            )
+
     class NavItem(ListItem):
-        def __init__(self, number, cockpit_data, **kwargs):
+        def __init__(self, number, nav_entry, **kwargs):
             super().__init__(**kwargs)
             self.number = number
-            self.cockpit_data = cockpit_data
+            self.nav_entry = nav_entry
+            self.cockpit_data = nav_entry["cockpit"]
+            self.launch_target = nav_entry.get("launch_target")
 
         def compose(self):
             c = self.cockpit_data
+            target = self.launch_target
             exists = Path(c["path"]).exists()
             dot = "[green]●[/green]" if exists else "[red]✗[/red]"
             gear = "[cyan]⚙[/cyan]" if c.get("has_settings") else " "
             num = f"[bold yellow]{self.number}[/bold yellow]"
-            name = f"[bold]{esc(c['slug'])}[/bold]"
-            subtitle = f"[dim]{esc(c['name'])}[/dim]" if c['name'] != c['slug'] else ""
+            if target and not is_local_target(target):
+                name = f"[bold]{esc(c['slug'])}[/bold]"
+                subtitle = f"[dim]· {esc(target.get('label', 'remote'))} · {esc(target.get('runtime_default', 'grok'))}[/dim]"
+            else:
+                name = f"[bold]{esc(c['slug'])}[/bold]"
+                subtitle = f"[dim]{esc(c['name'])}[/dim]" if c["name"] != c["slug"] else ""
             yield Static(f"   {num}  {dot} {gear} {name}  {subtitle}", markup=True)
 
     from textual.theme import Theme as TextualTheme
@@ -727,14 +792,19 @@ def run_tui(reg):
 
         def compose(self) -> ComposeResult:
             yield Header()
-            # Build list items grouped by org with headers
             items = []
             num = 1
-            for org in sorted(orgs.keys()):
-                items.append(OrgHeader(org, len(orgs[org]), org_dirty_repos.get(org, [])))
-                for c in sorted(orgs[org], key=lambda x: x["name"]):
-                    items.append(NavItem(num, c))
-                    num += 1
+            for kind, org, payload in sections:
+                if kind == "org":
+                    items.append(OrgHeader(org, len(payload), org_dirty_repos.get(org, [])))
+                    for entry in payload:
+                        items.append(NavItem(num, entry))
+                        num += 1
+                elif kind == "remote":
+                    items.append(RemoteHeader(len(payload)))
+                    for entry in payload:
+                        items.append(NavItem(num, entry))
+                        num += 1
             with Horizontal():
                 with Vertical(id="nav-pane"):
                     yield ListView(*items, id="nav-list")
@@ -754,7 +824,11 @@ def run_tui(reg):
         def on_list_view_highlighted(self, event):
             if not event.item:
                 return
-            if hasattr(event.item, "cockpit_data") and event.item.cockpit_data:
+            if hasattr(event.item, "nav_entry") and event.item.nav_entry:
+                self.query_one("#preview", Static).update(
+                    build_preview(event.item.nav_entry)
+                )
+            elif hasattr(event.item, "cockpit_data") and event.item.cockpit_data:
                 self.query_one("#preview", Static).update(
                     build_preview(event.item.cockpit_data)
                 )
@@ -770,32 +844,36 @@ def run_tui(reg):
                     lines.append("[green]All repos clean[/green]")
                 self.query_one("#preview", Static).update("\n".join(lines))
 
-        def _get_selected(self):
+        def _get_selected_entry(self):
             lv = self.query_one("#nav-list", ListView)
-            if lv.highlighted_child and hasattr(lv.highlighted_child, "cockpit_data"):
-                return lv.highlighted_child.cockpit_data
+            child = lv.highlighted_child
+            if child and hasattr(child, "nav_entry"):
+                return child.nav_entry
             return None
 
-        def action_launch(self):
-            c = self._get_selected()
-            if c:
-                selected_cockpit[0] = c
-                selected_mode[0] = None
+        def _set_selection(self, entry, mode):
+            if entry:
+                selected_cockpit[0] = entry["cockpit"]
+                selected_launch_target[0] = entry.get("launch_target")
+                selected_mode[0] = mode
                 self.exit()
+
+        def action_launch(self):
+            self._set_selection(self._get_selected_entry(), None)
 
         def action_launch_auto(self):
-            c = self._get_selected()
-            if c:
-                selected_cockpit[0] = c
-                selected_mode[0] = "auto"
-                self.exit()
+            entry = self._get_selected_entry()
+            if entry and entry.get("launch_target") and not is_local_target(entry["launch_target"]):
+                self.notify("Auto mode applies to local Claude only", severity="warning")
+                return
+            self._set_selection(entry, "auto")
 
         def action_launch_yolo(self):
-            c = self._get_selected()
-            if c:
-                selected_cockpit[0] = c
-                selected_mode[0] = "yolo"
-                self.exit()
+            entry = self._get_selected_entry()
+            if entry and entry.get("launch_target") and not is_local_target(entry["launch_target"]):
+                self.notify("Bypass mode applies to local Claude only", severity="warning")
+                return
+            self._set_selection(entry, "yolo")
 
         def action_cycle_theme(self):
             current_theme_idx[0] = (current_theme_idx[0] + 1) % len(THEME_DEFS)
@@ -822,7 +900,11 @@ def run_tui(reg):
         print(f"  \033[90m{type(app._exception).__name__}: {app._exception}\033[0m\n")
 
     if selected_cockpit[0]:
-        launch_cockpit(selected_cockpit[0], selected_mode[0])
+        launch_cockpit(
+            selected_cockpit[0],
+            selected_mode[0],
+            launch_target=selected_launch_target[0],
+        )
 
 
 # ─── Commands ─────────────────────────────────────────────
@@ -1151,19 +1233,38 @@ def cmd_new(args):
         print("  Reinstall: pip install ai-cockpit")
         sys.exit(1)
 
-    # Parse args
+    # Parse args. --github is a bool; --name/--org/--description take a value
+    # (--key=value or --key value). Supplying all three makes `new` fully
+    # non-interactive — safe for scripts/agents, no blind stdin piping.
     github = "--github" in args
-    path_args = [a for a in args if not a.startswith("--")]
+    flags: dict[str, "str | None"] = {"name": None, "org": None, "description": None}
+    path_args = []
+    tokens = [a for a in args if a != "--github"]
+    i = 0
+    while i < len(tokens):
+        tok = tokens[i]
+        if tok.startswith("--") and "=" in tok:
+            k, _, v = tok[2:].partition("=")
+            if k in flags:
+                flags[k] = v
+        elif tok.startswith("--") and tok[2:] in flags:
+            i += 1
+            flags[tok[2:]] = tokens[i] if i < len(tokens) else ""
+        elif not tok.startswith("--"):
+            path_args.append(tok)
+        i += 1
 
     if not path_args:
         print()
         print("  \033[1m\033[36mCreate a new cockpit\033[0m")
         print()
-        print("  Usage: cockpit new <path> [--github]")
+        print("  Usage: cockpit new <path> [--name N] [--org O] [--description D] [--github]")
         print()
         print("  Examples:")
         print("    cockpit new ~/repos/my-planning-cockpit")
         print("    cockpit new ./ops-cockpit --github")
+        print("    cockpit new ~/repos-jetta-operating/jetta-cockpit \\")
+        print("        --name Jetta --org jetta-operating --description 'Jetta ops cockpit'")
         print()
         print("  This creates a ready-to-fly cockpit with:")
         print("    - 8 skills: takeoff, land, touch-and-go, can-i-close,")
@@ -1192,22 +1293,38 @@ def cmd_new(args):
     print()
 
     name = target.name
+    org = target.parent.name
+    description = ""
     try:
-        name_input = input(f"  Name [{name}]: ").strip()
-        if name_input:
-            name = name_input
+        if flags["name"] is None:
+            name_input = input(f"  Name [{name}]: ").strip()
+            if name_input:
+                name = name_input
+        elif flags["name"]:
+            name = flags["name"]
 
-        org = target.parent.name
-        org_input = input(f"  Org [{org}]: ").strip()
-        if org_input:
-            org = org_input
+        if flags["org"] is None:
+            org_input = input(f"  Org [{org}]: ").strip()
+            if org_input:
+                org = org_input
+        elif flags["org"]:
+            org = flags["org"]
 
-        description = input("  Description (optional): ").strip()
+        if flags["description"] is None:
+            description = input("  Description (optional): ").strip()
+        else:
+            description = flags["description"]
     except (EOFError, KeyboardInterrupt):
         print("\n  Cancelled.")
         return
 
     slug = name.lower().replace(" ", "-").replace("_", "-")
+
+    # Guard: a duplicate slug would silently shadow `cockpit <slug>`.
+    if any(c.get("slug") == slug for c in load_registry().get("cockpits", [])):
+        print(f"  \033[31mA cockpit with slug '{slug}' is already registered.\033[0m")
+        print("  Pick a different --name, or `cockpit remove` the existing one first.")
+        sys.exit(1)
 
     # Copy template
     print()
@@ -1691,6 +1808,26 @@ def cmd_doctor():
     else:
         print(f"  \033[33mSome tools missing — cockpit will work but with reduced features.\033[0m")
         print(f"  \033[90mgit: required  |  gh: needed for --github  |  claude: needed to launch cockpits\033[0m")
+
+    print()
+    print("  \033[1mFlight deck\033[0m")
+    for line in registry_hygiene_report(enrich_registry(load_registry())):
+        print(line)
+    conduit = find_conduit_script()
+    if conduit:
+        try:
+            proc = subprocess.run(
+                [str(conduit), "doctor", "rentamac-cyprus-01"],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            if proc.returncode == 0:
+                print("  \033[32m✓\033[0m Cyprus doctor green")
+            else:
+                print("  \033[31m✗\033[0m Cyprus doctor failed")
+        except Exception as exc:
+            print(f"  \033[33m!\033[0m Cyprus doctor: {exc}")
     print()
 
 
@@ -1721,7 +1858,7 @@ def cmd_marketplace():
 
 
 def _main():
-    reg = load_registry()
+    reg = enrich_registry(load_registry())
     args = sys.argv[1:]
 
     if not args:

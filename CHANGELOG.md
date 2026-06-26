@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.5.0 — 2026-06-26
+
+Plan 2+3 flight deck — thin remote launch via conduit.
+
+### Flight deck
+- **`launch.py`** — hat × substrate × instrument router; conduit doctor → git pull → interactive attach
+- **Remote TUI section** — Greenmark · Cyprus · Grok when `launch_targets` exist (or greenmark-cockpit slug default)
+- **Local unchanged** — org-grouped list, one-click Claude launch
+- **`cockpit doctor`** — registry hygiene (phantom/disabled paths), conduit + Cyprus doctor status
+
+### Registry
+- Optional `launch_targets[]` per cockpit entry (substrate, machine_id, remote_path, runtime_default, label)
+- Greenmark v1 targets baked in for `greenmark-cockpit` slug
+
 ## v0.4.0 — 2026-04-03
 
 Release pipeline standardization and forge ecosystem integration.
