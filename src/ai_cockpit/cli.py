@@ -1820,6 +1820,14 @@ def cmd_marketplace():
 
 
 def _main():
+    try:
+        from fleet_core.cockpit_shim import try_fleet_delegate
+
+        if try_fleet_delegate(sys.argv[1:]):
+            return
+    except ImportError:
+        pass
+
     reg = enrich_registry(load_registry())
     args = sys.argv[1:]
 
