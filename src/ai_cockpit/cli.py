@@ -502,53 +502,8 @@ def run_tui(reg):
 
     ordered, sections, orgs = build_tui_nav(cockpits)
 
-    scan_dirs = get_scan_dirs()
-
-    # Check dirty repos per org directory (scan all git repos in each scan dir)
-    def scan_dirty_repos(scan_dir):
-        """Return list of (repo_name, dirty_file_count) for dirty repos in a directory."""
-        dirty = []
-        if not scan_dir.exists():
-            return dirty
-        for child in sorted(scan_dir.iterdir()):
-            if not child.is_dir() or not (child / ".git").exists():
-                continue
-            try:
-                result = subprocess.run(
-                    ["git", "status", "--porcelain"],
-                    cwd=child, capture_output=True, text=True, timeout=3,
-                )
-                lines = result.stdout.strip().splitlines() if result.stdout.strip() else []
-                if lines:
-                    dirty.append((child.name, len(lines)))
-            except Exception:
-                pass
-        return dirty
-
-    # Map org names to scan dirs
-    org_to_scan_dir = {}
-    for c in cockpits:
-        org = c.get("org", "unknown")
-        p = Path(c["path"])
-        parent = p.parent
-        if parent in scan_dirs:
-            org_to_scan_dir[org] = parent
-
-    # Scan each org's directory for dirty repos
-    org_dirty_repos = {}  # org -> [(repo_name, file_count), ...]
-    seen_dirs = set()
-    for org, scan_dir in org_to_scan_dir.items():
-        if scan_dir in seen_dirs:
-            # Multiple orgs from same dir — merge
-            for existing_org, existing_dir in org_to_scan_dir.items():
-                if existing_dir == scan_dir and existing_org in org_dirty_repos:
-                    org_dirty_repos[org] = org_dirty_repos[existing_org]
-                    break
-            else:
-                org_dirty_repos[org] = scan_dirty_repos(scan_dir)
-        else:
-            org_dirty_repos[org] = scan_dirty_repos(scan_dir)
-            seen_dirs.add(scan_dir)
+    # Dirty-repo scan removed from TUI hot path (git status per repo blocked startup)
+    org_dirty_repos = {org: [] for org in orgs}
 
     selected_cockpit = [None]
     selected_launch_target = [None]
@@ -557,11 +512,20 @@ def run_tui(reg):
     def esc(text):
         return str(text).replace("[", "\\[")
 
+    preview_cache = {}
+
     def build_preview(entry):
         if entry is None:
             return ""
         c = entry["cockpit"] if isinstance(entry, dict) and "cockpit" in entry else entry
         target = entry.get("launch_target") if isinstance(entry, dict) else None
+        cache_key = (
+            c.get("slug"),
+            (target or {}).get("substrate"),
+            (target or {}).get("machine_id"),
+        )
+        if cache_key in preview_cache:
+            return preview_cache[cache_key]
 
         settings = read_settings(c["path"]) or {}
         claude_cfg = settings.get("claude", {}) if isinstance(settings.get("claude"), dict) else {}
@@ -581,11 +545,7 @@ def run_tui(reg):
             if target.get("trust"):
                 lines.append(f"  Trust       {esc(target['trust'])}")
             lines.append(f"  Remote path {esc(target.get('remote_path', ''))}")
-            conduit = find_conduit_script()
-            if conduit and target.get("machine_id"):
-                from ai_cockpit.launch import conduit_doctor
-                ok = conduit_doctor(target["machine_id"], conduit=conduit)
-                lines.append(f"  Doctor      {'[green]ok[/green]' if ok else '[red]fail[/red]'}")
+            lines.append("  Doctor      [dim]runs at launch (not on hover)[/dim]")
             lines.append("")
         lines.append(f"[bold]Path[/bold]   {esc(c['path'])}")
         lines.append(f"[bold]Org[/bold]    {esc(c.get('org', 'unknown'))}")
@@ -657,7 +617,9 @@ def run_tui(reg):
             cmd, _ = build_claude_cmd(c)
             lines.append(f"  [dim]{' '.join(cmd)}[/dim]")
 
-        return "\n".join(lines)
+        text = "\n".join(lines)
+        preview_cache[cache_key] = text
+        return text
 
     class OrgHeader(ListItem):
         """Non-selectable org group header."""
