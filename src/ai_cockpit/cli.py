@@ -11,6 +11,7 @@ Usage:
     cockpit list         Non-interactive list
     cockpit add <path>   Register a cockpit manually
     cockpit add-remote <name> <host> [mux]  Register remote mux cockpit (ssh → tmux → claude chat)
+    cockpit sync-muxes   Upsert mux cockpits from the directrux plane roster (source of truth for hosts)
     cockpit remove <name> Remove from registry
     cockpit new <path>   Create a new cockpit from the template
     cockpit can-i-close  Check if all cockpits are safe to close (alias: cic)
@@ -978,6 +979,57 @@ def cmd_add(reg, path_str):
     print(f"  \033[32m+\033[0m {name} ({slug}) → {path}")
 
 
+MUX_ROSTER = Path.home() / ".config" / "directrux" / "product.json"
+
+
+def cmd_sync_muxes(reg):
+    """Upsert one remote mux cockpit per plane in the directrux roster.
+
+    The roster (managed_planes + fleet_extra_planes) is the source of truth
+    for which computer each mux is tied to — never hand-enter hosts.
+    """
+    roster_path = Path(os.environ.get("DIRECTRUX_PRODUCT_JSON", MUX_ROSTER))
+    if not roster_path.exists():
+        print(f"  \033[31mRoster not found:\033[0m {roster_path}")
+        sys.exit(1)
+    data = json.loads(roster_path.read_text())
+    planes = (data.get("managed_planes") or []) + (data.get("fleet_extra_planes") or [])
+
+    by_slug = {c["slug"]: c for c in reg["cockpits"]}
+    for p in planes:
+        mux = p["id"]
+        host = p["host"]
+        desc = f"{p.get('lane', '?')} lane · {p.get('role', 'worker')}"
+        if p.get("room"):
+            desc += f" · {p['room']}"
+        entry = by_slug.get(mux)
+        if entry and not entry.get("remote"):
+            print(f"  \033[33m!\033[0m {mux}: slug taken by a local cockpit — skipped")
+            continue
+        if entry:
+            changed = entry["remote"].get("host") != host
+            entry["remote"]["host"] = host
+            entry["org"] = host
+            entry["description"] = desc
+            entry["path"] = f"ssh://{host}"
+            mark = "\033[36m~\033[0m" if changed else "\033[90m=\033[0m"
+        else:
+            reg["cockpits"].append({
+                "name": mux,
+                "slug": mux,
+                "path": f"ssh://{host}",
+                "org": host,
+                "description": desc,
+                "has_settings": False,
+                "remote": {"host": host, "mux": mux},
+            })
+            mark = "\033[32m+\033[0m"
+        print(f"  {mark} \033[36m⇄\033[0m {mux:<12s} → {host}")
+
+    save_registry(reg)
+    print(f"\n  \033[90mSynced {len(planes)} planes from {roster_path}\033[0m")
+
+
 def cmd_add_remote(reg, name, host, mux=None):
     """Register a remote mux cockpit: ssh → tmux → claude chat attached to the mux."""
     mux = mux or slugify(name)
@@ -1925,6 +1977,8 @@ def _main():
         cmd_add(reg, args[1])
     elif command == "add-remote" and len(args) > 2:
         cmd_add_remote(reg, args[1], args[2], args[3] if len(args) > 3 else None)
+    elif command == "sync-muxes":
+        cmd_sync_muxes(reg)
     elif command == "remove" and len(args) > 1:
         cmd_remove(reg, " ".join(args[1:]))
     elif command == "upgrade" and len(args) > 1:

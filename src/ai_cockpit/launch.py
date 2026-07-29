@@ -205,9 +205,14 @@ def launch_local_claude(cockpit: dict[str, Any], mode: str | None, build_claude_
 REMOTE_PATH_EXPORT = 'export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"'
 
 
-def launch_mux_remote(cockpit: dict[str, Any]) -> None:
-    """Remote mux cockpit: ssh -t <host>, tmux new-session -A, and a fresh
-    claude chat whose startup prompt attaches it to the mux running there."""
+def is_local_host(host: str) -> bool:
+    return (host or "").lower() in LOCAL_MACHINE_IDS
+
+
+def launch_mux_remote(cockpit: dict[str, Any], mode: str | None = None) -> None:
+    """Mux cockpit: tmux new-session -A on the mux's own machine (ssh -t if
+    remote, plain tmux if the mux lives on this laptop), and a fresh claude
+    chat whose startup prompt attaches it to the mux running there."""
     r = cockpit["remote"]
     host = r["host"]
     mux = r["mux"]
@@ -217,14 +222,20 @@ def launch_mux_remote(cockpit: dict[str, Any]) -> None:
         f"check `tmux ls` for a {mux} session. If it is not running, start {mux} first "
         f"(look in ~/.local/bin), then attach. Report status once connected."
     )
-    inner = f"{REMOTE_PATH_EXPORT}; claude {shlex.quote(prompt)}"
-    remote_cmd = (
+    perm = "--dangerously-skip-permissions" if mode == "yolo" else "--permission-mode auto"
+    inner = f"{REMOTE_PATH_EXPORT}; claude {perm} {shlex.quote(prompt)}"
+    tmux_cmd = (
         f"{REMOTE_PATH_EXPORT}; "
         f"tmux new-session -A -s {shlex.quote(session)} {shlex.quote(inner)}"
     )
-    print(f"\n  \033[36m⇄\033[0m Opening \033[1m{cockpit['name']}\033[0m on \033[1m{host}\033[0m")
-    print(f"  \033[90mtmux: {session} → new claude chat attaches to {mux}\033[0m\n")
-    os.execvp("ssh", ["ssh", "-t", host, remote_cmd])
+    if is_local_host(host):
+        print(f"\n  \033[36m⇄\033[0m Opening \033[1m{cockpit['name']}\033[0m locally ({host})")
+        print(f"  \033[90mtmux: {session} → new claude chat attaches to {mux}\033[0m\n")
+        os.execvp("/bin/sh", ["sh", "-c", tmux_cmd])
+    else:
+        print(f"\n  \033[36m⇄\033[0m Opening \033[1m{cockpit['name']}\033[0m on \033[1m{host}\033[0m")
+        print(f"  \033[90mtmux: {session} → new claude chat attaches to {mux}\033[0m\n")
+        os.execvp("ssh", ["ssh", "-t", host, tmux_cmd])
 
 
 def launch_cockpit_entry(
@@ -236,7 +247,7 @@ def launch_cockpit_entry(
 ) -> None:
     cockpit = enrich_cockpit_entry(cockpit)
     if cockpit.get("remote"):
-        launch_mux_remote(cockpit)
+        launch_mux_remote(cockpit, mode)
         return
     if launch_target and not is_local_target(launch_target):
         launch_remote(cockpit, launch_target)
