@@ -981,12 +981,20 @@ def cmd_add(reg, path_str):
 
 MUX_ROSTER = Path.home() / ".config" / "directrux" / "product.json"
 
+# Binary name on the plane's own host when it differs from the plane id.
+# ponytail: two known aliases hardcoded — move into the roster if planes multiply.
+MUX_CLI_ALIASES = {"gmux": "greenmux", "directrux": "directmux"}
+
 
 def cmd_sync_muxes(reg):
-    """Upsert one remote mux cockpit per plane in the directrux roster.
+    """Upsert mux cockpits from the directrux roster — two per worker plane.
 
     The roster (managed_planes + fleet_extra_planes) is the source of truth
     for which computer each mux is tied to — never hand-enter hosts.
+
+      <mux> session  — chat on the plane's own host, living in that plane
+      <mux> manager  — chat in the directmux plane on the manager machine,
+                       steering the plane via its forwarding CLI
     """
     roster_path = Path(os.environ.get("DIRECTRUX_PRODUCT_JSON", MUX_ROSTER))
     if not roster_path.exists():
@@ -995,41 +1003,60 @@ def cmd_sync_muxes(reg):
     data = json.loads(roster_path.read_text())
     planes = (data.get("managed_planes") or []) + (data.get("fleet_extra_planes") or [])
 
-    by_slug = {c["slug"]: c for c in reg["cockpits"]}
+    mgr_plane = next((p for p in planes if p.get("role") == "manager"), None)
+    mgr_host = mgr_plane["host"] if mgr_plane else "daniel-laptop-01"
+
+    desired = []
     for p in planes:
         mux = p["id"]
         host = p["host"]
+        how = p.get("how") or p.get("notes") or ""
+        cli = MUX_CLI_ALIASES.get(mux, mux)
         desc = f"{p.get('lane', '?')} lane · {p.get('role', 'worker')}"
         if p.get("room"):
             desc += f" · {p['room']}"
-        how = p.get("how") or p.get("notes") or ""
-        entry = by_slug.get(mux)
+        desired.append({
+            "name": f"{mux} session",
+            "slug": mux,
+            "path": f"ssh://{host}",
+            "org": host,
+            "description": desc,
+            "has_settings": False,
+            "remote": {"host": host, "mux": mux, "cli": cli,
+                       "session": f"cockpit-{mux}", "how": how},
+        })
+        if p.get("role") == "worker":
+            desired.append({
+                "name": f"{mux} manager",
+                "slug": f"{mux}-manager",
+                "path": f"ssh://{mgr_host}",
+                "org": mgr_host,
+                "description": f"steers {mux} from the manager machine · lives in directmux",
+                "has_settings": False,
+                "remote": {"host": mgr_host, "mux": mux, "cli": mux,
+                           "container": "directmux", "container_cli": "directmux",
+                           "manager": True, "session": f"{mux}-manager", "how": how},
+            })
+
+    by_slug = {c["slug"]: c for c in reg["cockpits"]}
+    for d in desired:
+        entry = by_slug.get(d["slug"])
         if entry and not entry.get("remote"):
-            print(f"  \033[33m!\033[0m {mux}: slug taken by a local cockpit — skipped")
+            print(f"  \033[33m!\033[0m {d['slug']}: slug taken by a local cockpit — skipped")
             continue
         if entry:
-            changed = entry["remote"].get("host") != host
-            entry["remote"]["host"] = host
-            entry["remote"]["how"] = how
-            entry["org"] = host
-            entry["description"] = desc
-            entry["path"] = f"ssh://{host}"
+            changed = entry["remote"] != d["remote"] or entry["name"] != d["name"]
+            entry.update(d)
             mark = "\033[36m~\033[0m" if changed else "\033[90m=\033[0m"
         else:
-            reg["cockpits"].append({
-                "name": mux,
-                "slug": mux,
-                "path": f"ssh://{host}",
-                "org": host,
-                "description": desc,
-                "has_settings": False,
-                "remote": {"host": host, "mux": mux, "how": how},
-            })
+            reg["cockpits"].append(d)
             mark = "\033[32m+\033[0m"
-        print(f"  {mark} \033[36m⇄\033[0m {mux:<12s} → {host}")
+        r = d["remote"]
+        role = "manager" if r.get("manager") else "session"
+        print(f"  {mark} \033[36m⇄\033[0m {d['slug']:<18s} {role:<8s} → {r['host']}  \033[90min {r.get('container', r['mux'])}\033[0m")
 
     save_registry(reg)
-    print(f"\n  \033[90mSynced {len(planes)} planes from {roster_path}\033[0m")
+    print(f"\n  \033[90mSynced {len(planes)} planes → {len(desired)} cockpits from {roster_path}\033[0m")
 
 
 def cmd_add_remote(reg, name, host, mux=None):

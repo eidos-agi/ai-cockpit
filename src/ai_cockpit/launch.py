@@ -210,36 +210,58 @@ def is_local_host(host: str) -> bool:
 
 
 def launch_mux_remote(cockpit: dict[str, Any], mode: str | None = None) -> None:
-    """Mux cockpit: tmux new-session -A on the mux's own machine (ssh -t if
-    remote, plain tmux if the mux lives on this laptop), and a fresh claude
-    chat whose startup prompt attaches it to the mux running there."""
+    """Mux cockpit chat: a claude chat in a tmux session on the right machine,
+    registered into the right plane.
+
+    Two flavors per plane (the manager/worker split):
+      manager — chat lives IN the directmux plane on the manager machine and
+                steers the target plane via its forwarding CLI (e.g. `gmux`).
+      session — chat lives on the plane's own host, registered into that
+                plane, driving it with the host-local CLI (e.g. `greenmux`).
+    """
     r = cockpit["remote"]
     host = r["host"]
     mux = r["mux"]
+    cli = r.get("cli", mux)                      # CLI the chat drives the plane with
+    container = r.get("container", mux)          # plane the chat itself lives in
+    container_cli = r.get("container_cli", cli)  # CLI used to register the chat
     session = r.get("session", f"cockpit-{mux}")
     how = r.get("how", "")
-    prompt = r.get("prompt") or (
-        f"You are the {mux} cockpit chat — the supervisor console for the {mux} plane. "
-        f"Drive it with the `{mux}` CLI verbs (sessions, capture, send, ask, ...). "
-        + (f"Plane notes:\n{how}\n\n" if how else "")
-        + f"The CLI lives in ~/.local/bin on this machine and may use the full product name "
-        f"rather than the mux id (e.g. gmux → greenmux) — find it first. "
-        f"Start now: run `<cli> sessions` to show the fleet and summarize what each agent "
-        f"is doing. If the plane is not running, start it and report. Then await orders."
-    )
+    if r.get("manager"):
+        default_prompt = (
+            f"You are the {mux} MANAGER chat, living inside the {container} plane on the "
+            f"manager machine. You steer the {mux} plane remotely: `{cli} <verb>` here "
+            f"forwards to its host. "
+            + (f"Plane notes:\n{how}\n\n" if how else "")
+            + f"Start now: run `{cli} ls` to show the {mux} fleet and summarize it. "
+            f"Then await orders."
+        )
+    else:
+        default_prompt = (
+            f"You are the {mux} cockpit chat — the supervisor console living on the {mux} "
+            f"plane's own machine. Drive it with `{cli} <verb>` (ls, capture, send, run, ask, ...). "
+            + (f"Plane notes:\n{how}\n\n" if how else "")
+            + f"Start now: run `{cli} ls` to show the fleet and summarize what each agent "
+            f"is doing. If the plane is not running, start it and report. Then await orders."
+        )
+    prompt = r.get("prompt") or default_prompt
     perm = "--dangerously-skip-permissions" if mode == "yolo" else "--permission-mode auto"
     inner = f"{REMOTE_PATH_EXPORT}; claude {perm} {shlex.quote(prompt)}"
+    # Create detached, register into the container plane (best-effort), then attach.
+    # If the session already exists, new-session fails quietly and we reattach.
     tmux_cmd = (
         f"{REMOTE_PATH_EXPORT}; "
-        f"tmux new-session -A -s {shlex.quote(session)} {shlex.quote(inner)}"
+        f"tmux new-session -d -s {shlex.quote(session)} {shlex.quote(inner)} 2>/dev/null; "
+        f"{shlex.quote(container_cli)} register {shlex.quote(session)} {shlex.quote(session)} "
+        f"-d {shlex.quote(f'cockpit chat: {cockpit['name']}')} >/dev/null 2>&1; "
+        f"exec tmux attach -t {shlex.quote(session)}"
     )
+    where = f"locally ({host})" if is_local_host(host) else f"on \033[1m{host}\033[0m"
+    print(f"\n  \033[36m⇄\033[0m Opening \033[1m{cockpit['name']}\033[0m {where}")
+    print(f"  \033[90mtmux: {session} · lives in {container} · drives {mux} via {cli}\033[0m\n")
     if is_local_host(host):
-        print(f"\n  \033[36m⇄\033[0m Opening \033[1m{cockpit['name']}\033[0m locally ({host})")
-        print(f"  \033[90mtmux: {session} → supervisor chat for the {mux} plane\033[0m\n")
         os.execvp("/bin/sh", ["sh", "-c", tmux_cmd])
     else:
-        print(f"\n  \033[36m⇄\033[0m Opening \033[1m{cockpit['name']}\033[0m on \033[1m{host}\033[0m")
-        print(f"  \033[90mtmux: {session} → supervisor chat for the {mux} plane\033[0m\n")
         os.execvp("ssh", ["ssh", "-t", host, tmux_cmd])
 
 
