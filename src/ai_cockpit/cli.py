@@ -1002,6 +1002,7 @@ def cmd_sync_muxes(reg):
         desc = f"{p.get('lane', '?')} lane · {p.get('role', 'worker')}"
         if p.get("room"):
             desc += f" · {p['room']}"
+        how = p.get("how") or p.get("notes") or ""
         entry = by_slug.get(mux)
         if entry and not entry.get("remote"):
             print(f"  \033[33m!\033[0m {mux}: slug taken by a local cockpit — skipped")
@@ -1009,6 +1010,7 @@ def cmd_sync_muxes(reg):
         if entry:
             changed = entry["remote"].get("host") != host
             entry["remote"]["host"] = host
+            entry["remote"]["how"] = how
             entry["org"] = host
             entry["description"] = desc
             entry["path"] = f"ssh://{host}"
@@ -1021,7 +1023,7 @@ def cmd_sync_muxes(reg):
                 "org": host,
                 "description": desc,
                 "has_settings": False,
-                "remote": {"host": host, "mux": mux},
+                "remote": {"host": host, "mux": mux, "how": how},
             })
             mark = "\033[32m+\033[0m"
         print(f"  {mark} \033[36m⇄\033[0m {mux:<12s} → {host}")

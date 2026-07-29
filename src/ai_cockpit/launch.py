@@ -217,10 +217,15 @@ def launch_mux_remote(cockpit: dict[str, Any], mode: str | None = None) -> None:
     host = r["host"]
     mux = r["mux"]
     session = r.get("session", f"cockpit-{mux}")
+    how = r.get("how", "")
     prompt = r.get("prompt") or (
-        f"You are the {mux} cockpit chat on this machine. Attach to the running {mux} mux: "
-        f"check `tmux ls` for a {mux} session. If it is not running, start {mux} first "
-        f"(look in ~/.local/bin), then attach. Report status once connected."
+        f"You are the {mux} cockpit chat — the supervisor console for the {mux} plane. "
+        f"Drive it with the `{mux}` CLI verbs (sessions, capture, send, ask, ...). "
+        + (f"Plane notes:\n{how}\n\n" if how else "")
+        + f"The CLI lives in ~/.local/bin on this machine and may use the full product name "
+        f"rather than the mux id (e.g. gmux → greenmux) — find it first. "
+        f"Start now: run `<cli> sessions` to show the fleet and summarize what each agent "
+        f"is doing. If the plane is not running, start it and report. Then await orders."
     )
     perm = "--dangerously-skip-permissions" if mode == "yolo" else "--permission-mode auto"
     inner = f"{REMOTE_PATH_EXPORT}; claude {perm} {shlex.quote(prompt)}"
@@ -230,11 +235,11 @@ def launch_mux_remote(cockpit: dict[str, Any], mode: str | None = None) -> None:
     )
     if is_local_host(host):
         print(f"\n  \033[36m⇄\033[0m Opening \033[1m{cockpit['name']}\033[0m locally ({host})")
-        print(f"  \033[90mtmux: {session} → new claude chat attaches to {mux}\033[0m\n")
+        print(f"  \033[90mtmux: {session} → supervisor chat for the {mux} plane\033[0m\n")
         os.execvp("/bin/sh", ["sh", "-c", tmux_cmd])
     else:
         print(f"\n  \033[36m⇄\033[0m Opening \033[1m{cockpit['name']}\033[0m on \033[1m{host}\033[0m")
-        print(f"  \033[90mtmux: {session} → new claude chat attaches to {mux}\033[0m\n")
+        print(f"  \033[90mtmux: {session} → supervisor chat for the {mux} plane\033[0m\n")
         os.execvp("ssh", ["ssh", "-t", host, tmux_cmd])
 
 
