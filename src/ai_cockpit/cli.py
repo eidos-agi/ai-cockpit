@@ -10,6 +10,7 @@ Usage:
     cockpit upgrade <n>  Plan upgrade to latest schema (add --apply to execute)
     cockpit list         Non-interactive list
     cockpit add <path>   Register a cockpit manually
+    cockpit add-remote <name> <host> [mux]  Register remote mux cockpit (ssh → tmux → claude chat)
     cockpit remove <name> Remove from registry
     cockpit new <path>   Create a new cockpit from the template
     cockpit can-i-close  Check if all cockpits are safe to close (alias: cic)
@@ -454,14 +455,31 @@ def launch_cockpit(cockpit, mode=None, launch_target=None):
 
 
 def build_tui_nav(cockpits):
-    """Build flat selectable list + section metadata for Local / Remote TUI."""
+    """Build flat selectable list + section metadata for Remote / Local TUI.
+
+    Remote section goes first: mux cockpits (entries with a `remote` key —
+    ssh → tmux → claude chat attached to the mux) plus conduit launch_targets.
+    """
     enriched = [enrich_cockpit_entry(c) for c in cockpits]
     orgs: dict[str, list] = {}
     for c in enriched:
+        if c.get("remote"):
+            continue  # mux cockpits live in the REMOTE section only
         orgs.setdefault(c.get("org", "unknown"), []).append(c)
 
     selectable = []
     sections = []  # (kind, org|None, nav_entries)
+
+    remote_entries = []
+    for c in sorted(enriched, key=lambda x: x["slug"]):
+        if c.get("remote"):
+            remote_entries.append({"cockpit": c, "launch_target": None, "section": "remote"})
+    for c in enriched:
+        for t in sorted(remote_targets(c), key=lambda t: t.get("label", "")):
+            remote_entries.append({"cockpit": c, "launch_target": t, "section": "remote"})
+    if remote_entries:
+        selectable.extend(remote_entries)
+        sections.append(("remote", None, remote_entries))
 
     for org in sorted(orgs.keys()):
         org_entries = []
@@ -470,17 +488,6 @@ def build_tui_nav(cockpits):
             org_entries.append(entry)
             selectable.append(entry)
         sections.append(("org", org, org_entries))
-
-    remote_entries = []
-    for c in enriched:
-        for t in remote_targets(c):
-            remote_entries.append({"cockpit": c, "launch_target": t, "section": "remote"})
-    if remote_entries:
-        remote_entries.sort(
-            key=lambda e: (e["cockpit"]["slug"], e["launch_target"].get("label", ""))
-        )
-        selectable.extend(remote_entries)
-        sections.append(("remote", None, remote_entries))
 
     return selectable, sections, orgs
 
@@ -526,6 +533,25 @@ def run_tui(reg):
         )
         if cache_key in preview_cache:
             return preview_cache[cache_key]
+
+        if c.get("remote"):
+            r = c["remote"]
+            session = r.get("session", f"cockpit-{r['mux']}")
+            lines = [f"[bold cyan]{esc(c['name'])}[/bold cyan]"]
+            if c.get("description"):
+                lines.append(f"[dim]{esc(c['description'])}[/dim]")
+            lines.append("")
+            lines.append("[bold]Type[/bold]   [cyan]⇄ remote mux[/cyan]")
+            lines.append(f"[bold]Host[/bold]   {esc(r['host'])}")
+            lines.append(f"[bold]Mux[/bold]    {esc(r['mux'])}")
+            lines.append(f"[bold]Slug[/bold]   {esc(c['slug'])}")
+            lines.append("")
+            lines.append("[bold]━━ Launch Command ━━[/bold]")
+            lines.append(f"  [dim]ssh -t {esc(r['host'])} tmux new-session -A -s {esc(session)} claude …[/dim]")
+            lines.append("  [dim]New claude chat inside tmux, attaches to the running mux[/dim]")
+            text = "\n".join(lines)
+            preview_cache[cache_key] = text
+            return text
 
         settings = read_settings(c["path"]) or {}
         claude_cfg = settings.get("claude", {}) if isinstance(settings.get("claude"), dict) else {}
@@ -661,6 +687,12 @@ def run_tui(reg):
         def compose(self):
             c = self.cockpit_data
             target = self.launch_target
+            if c.get("remote"):
+                num = f"[bold yellow]{self.number}[/bold yellow]"
+                name = f"[bold]{esc(c['slug'])}[/bold]"
+                subtitle = f"[dim]· {esc(c['remote']['host'])} · {esc(c['remote']['mux'])}[/dim]"
+                yield Static(f"   {num}  [cyan]⇄[/cyan]   {name}  {subtitle}", markup=True)
+                return
             exists = Path(c["path"]).exists()
             dot = "[green]●[/green]" if exists else "[red]✗[/red]"
             gear = "[cyan]⚙[/cyan]" if c.get("has_settings") else " "
@@ -887,13 +919,21 @@ def cmd_list(reg):
         org = c.get("org", "unknown")
         orgs.setdefault(org, []).append(c)
 
-    for org, items in sorted(orgs.items()):
+    def org_order(item):
+        org, items = item
+        return (not any(c.get("remote") for c in items), org)
+
+    for org, items in sorted(orgs.items(), key=org_order):
         print(f"  \033[90m{org}\033[0m")
         for c in sorted(items, key=lambda x: x["name"]):
-            exists = Path(c["path"]).exists()
-            status = "\033[32m●\033[0m" if exists else "\033[31m✗\033[0m"
+            if c.get("remote"):
+                status = "\033[36m⇄\033[0m"
+                name = f"{c['name']}  \033[90m→ {c['remote']['host']}\033[0m"
+            else:
+                exists = Path(c["path"]).exists()
+                status = "\033[32m●\033[0m" if exists else "\033[31m✗\033[0m"
+                name = c["name"]
             slug = f"\033[1m{c['slug']}\033[0m"
-            name = c["name"]
             print(f"    {status} {slug:<30s} {name}")
         print()
 
@@ -936,6 +976,27 @@ def cmd_add(reg, path_str):
     })
     save_registry(reg)
     print(f"  \033[32m+\033[0m {name} ({slug}) → {path}")
+
+
+def cmd_add_remote(reg, name, host, mux=None):
+    """Register a remote mux cockpit: ssh → tmux → claude chat attached to the mux."""
+    mux = mux or slugify(name)
+    slug = slugify(name)
+    for c in reg["cockpits"]:
+        if c["slug"] == slug:
+            print(f"  \033[33mAlready registered:\033[0m {slug}")
+            return
+    reg["cockpits"].append({
+        "name": name,
+        "slug": slug,
+        "path": f"ssh://{host}",
+        "org": host,
+        "description": f"Remote {mux} chat on {host}",
+        "has_settings": False,
+        "remote": {"host": host, "mux": mux},
+    })
+    save_registry(reg)
+    print(f"  \033[32m+\033[0m \033[36m⇄\033[0m {name} → {host} ({mux})")
 
 
 def cmd_scan(reg):
@@ -1010,6 +1071,9 @@ def cmd_status(reg):
     print(f"  {'─' * 28} {'─' * 22} {'─' * 10} {'─' * 10} {'─' * 10}")
 
     for c in sorted(cockpits, key=lambda x: (x.get("org", ""), x["name"])):
+        if c.get("remote"):
+            print(f"  {c['slug'][:26]:<28s} \033[36m⇄ remote → {c['remote']['host']} ({c['remote']['mux']})\033[0m")
+            continue
         observed, caps = detect_schema_version(c["path"])
         settings = read_settings(c["path"]) or {}
         declared = settings.get("version")
@@ -1859,6 +1923,8 @@ def _main():
         cmd_marketplace()
     elif command == "add" and len(args) > 1:
         cmd_add(reg, args[1])
+    elif command == "add-remote" and len(args) > 2:
+        cmd_add_remote(reg, args[1], args[2], args[3] if len(args) > 3 else None)
     elif command == "remove" and len(args) > 1:
         cmd_remove(reg, " ".join(args[1:]))
     elif command == "upgrade" and len(args) > 1:

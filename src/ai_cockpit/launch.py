@@ -202,6 +202,31 @@ def launch_local_claude(cockpit: dict[str, Any], mode: str | None, build_claude_
     os.execvp("claude", cmd)
 
 
+REMOTE_PATH_EXPORT = 'export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"'
+
+
+def launch_mux_remote(cockpit: dict[str, Any]) -> None:
+    """Remote mux cockpit: ssh -t <host>, tmux new-session -A, and a fresh
+    claude chat whose startup prompt attaches it to the mux running there."""
+    r = cockpit["remote"]
+    host = r["host"]
+    mux = r["mux"]
+    session = r.get("session", f"cockpit-{mux}")
+    prompt = r.get("prompt") or (
+        f"You are the {mux} cockpit chat on this machine. Attach to the running {mux} mux: "
+        f"check `tmux ls` for a {mux} session. If it is not running, start {mux} first "
+        f"(look in ~/.local/bin), then attach. Report status once connected."
+    )
+    inner = f"{REMOTE_PATH_EXPORT}; claude {shlex.quote(prompt)}"
+    remote_cmd = (
+        f"{REMOTE_PATH_EXPORT}; "
+        f"tmux new-session -A -s {shlex.quote(session)} {shlex.quote(inner)}"
+    )
+    print(f"\n  \033[36m⇄\033[0m Opening \033[1m{cockpit['name']}\033[0m on \033[1m{host}\033[0m")
+    print(f"  \033[90mtmux: {session} → new claude chat attaches to {mux}\033[0m\n")
+    os.execvp("ssh", ["ssh", "-t", host, remote_cmd])
+
+
 def launch_cockpit_entry(
     cockpit: dict[str, Any],
     mode: str | None = None,
@@ -210,6 +235,9 @@ def launch_cockpit_entry(
     build_claude_cmd=None,
 ) -> None:
     cockpit = enrich_cockpit_entry(cockpit)
+    if cockpit.get("remote"):
+        launch_mux_remote(cockpit)
+        return
     if launch_target and not is_local_target(launch_target):
         launch_remote(cockpit, launch_target)
         return
@@ -222,6 +250,8 @@ def registry_hygiene_report(reg: dict[str, Any]) -> list[str]:
     """Plan 2: surface registry lies."""
     lines: list[str] = []
     for c in reg.get("cockpits", []):
+        if c.get("remote"):
+            continue  # remote mux cockpits have no local path
         path = c.get("path", "")
         if not path:
             lines.append(f"  \033[31m✗\033[0m {c.get('slug', '?')}: empty path")
