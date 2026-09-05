@@ -1,6 +1,7 @@
 """Tests for flight deck launch router."""
 
 from ai_cockpit.launch import (
+    CONDUIT_SEARCH,
     GREENMARK_LAUNCH_TARGETS,
     build_remote_shell_command,
     enrich_cockpit_entry,
@@ -36,6 +37,13 @@ def test_build_remote_shell_command():
     assert "git pull --ff-only" in cmd
     assert "exec grok" in cmd
     assert "/Users/rentamac/repos/greenmark-cockpit" in cmd
+
+
+def test_conduit_search_has_no_hardcoded_username():
+    for candidate in CONDUIT_SEARCH:
+        text = str(candidate)
+        assert "/Users/dshanklin/" not in text
+        assert "dshanklinbv" not in text
 
 
 def test_enrich_registry_preserves_other_cockpits():

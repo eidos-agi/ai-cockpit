@@ -15,7 +15,6 @@ LOCAL_MACHINE_IDS = frozenset({"daniel-laptop-01", "local", "laptop"})
 CONDUIT_SEARCH = [
     Path.home() / "repos-personal" / "conduit" / "scripts" / "conduit",
     Path.home() / "repos-personal" / "conduit" / "scripts" / "conduit.py",
-    Path("/Users/dshanklin/repos-personal/conduit/scripts/conduit"),
 ]
 
 GREENMARK_LAUNCH_TARGETS = [

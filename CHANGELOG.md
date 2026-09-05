@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Harnesses
+- **`--harness` / `-H`** — launch a cockpit with claude-code, grok, codex, cursor-agent, eidos-harness, hermes, deepseek, or none
+- **DeepSeek via Paseo** — `cockpit <name> --harness deepseek` (alias `dsh`) runs `paseo run --provider dsh --cwd <cockpit>` then `paseo attach <agentId>`. Clear errors when paseo or the `dsh` provider is missing, with the `dsh-acp-paseo` install hint. DeepSeek is not a raw `dsh` binary and no longer uses the localhost:3080 web UI
+- **TUI harness menu** — after picking a cockpit, choose the harness before launch
+- **`cockpit doctor`** — reports paseo + DeepSeek/Paseo provider readiness
+
+### Fixes
+- Removed hardcoded `/Users/dshanklin/...` conduit path; search is home-relative (`~/repos-personal/conduit/...`) plus `PATH`
+
 ## v0.5.0 — 2026-06-26
 
 Plan 2+3 flight deck — thin remote launch via conduit.

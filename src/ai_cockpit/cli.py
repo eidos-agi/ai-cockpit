@@ -1,10 +1,16 @@
 """cockpit — Launch pad for all your AI cockpits.
 
 Usage:
-    cockpit              Interactive TUI cockpit selector
+    cockpit              Interactive TUI cockpit selector (harness menu on launch)
     cockpit <name>       Open Claude Code (auto mode unlocked via Shift+Tab)
     cockpit <name> -a    Open IN auto mode (--permission-mode auto)
     cockpit <name> -y    Open with --dangerously-skip-permissions
+    cockpit <name> --harness deepseek
+                         Launch DeepSeek through Paseo provider dsh
+                         (alias: --harness dsh)
+    cockpit <name> --harness <name>
+                         claude-code | grok | codex | cursor-agent |
+                         eidos-harness | hermes | deepseek | none
     cockpit scan         Auto-discover cockpits in known directories
     cockpit status       Show version + capabilities for all cockpits
     cockpit upgrade <n>  Plan upgrade to latest schema (add --apply to execute)
@@ -42,6 +48,15 @@ import traceback
 from datetime import datetime
 from pathlib import Path
 
+from ai_cockpit.harness import (
+    HarnessError,
+    check_paseo_dsh_ready,
+    launch_binary_harness,
+    launch_deepseek_via_paseo,
+    parse_harness_args,
+    pick_harness_menu,
+    resolve_harness,
+)
 from ai_cockpit.launch import (
     describe_launch,
     enrich_cockpit_entry,
@@ -445,10 +460,57 @@ def build_claude_cmd(cockpit, mode=None):
     return cmd, startup.get("command")
 
 
-def launch_cockpit(cockpit, mode=None, launch_target=None):
-    """Launch local Claude or remote substrate via conduit."""
+def launch_cockpit(cockpit, mode=None, launch_target=None, harness=None):
+    """Launch a local harness, remote substrate via conduit, or mux chat."""
+    cockpit = enrich_cockpit_entry(cockpit)
+    try:
+        harness_name = resolve_harness(harness)
+    except HarnessError as exc:
+        print(f"  \033[31m{exc}\033[0m")
+        sys.exit(1)
+
+    if cockpit.get("remote") or (launch_target and not is_local_target(launch_target)):
+        if harness_name not in ("claude-code",):
+            print("  \033[31m--harness applies to local cockpit launch only.\033[0m")
+            print("  \033[90mRemote mux / conduit targets keep their own instrument.\033[0m")
+            sys.exit(1)
+        launch_cockpit_entry(
+            cockpit,
+            mode,
+            launch_target=launch_target,
+            build_claude_cmd=build_claude_cmd,
+        )
+        return
+
+    path = cockpit["path"]
+    if harness_name == "deepseek":
+        print(f"\n  \033[36m→\033[0m Opening \033[1m{cockpit['name']}\033[0m via Paseo provider dsh")
+        print(f"  \033[90m{path}\033[0m")
+        print("  \033[90mpaseo run --provider dsh --cwd <cockpit>  then  paseo attach <agentId>\033[0m\n")
+        try:
+            launch_deepseek_via_paseo(path)
+        except HarnessError as exc:
+            print(f"  \033[31m{exc}\033[0m")
+            sys.exit(1)
+        return
+
+    if harness_name == "none":
+        print(f"\n  \033[36m→\033[0m {cockpit['name']}  \033[90m(no harness)\033[0m")
+        print(f"  \033[90m{path}\033[0m\n")
+        return
+
+    if harness_name != "claude-code":
+        print(f"\n  \033[36m→\033[0m Opening \033[1m{cockpit['name']}\033[0m with {harness_name}")
+        print(f"  \033[90m{path}\033[0m\n")
+        try:
+            launch_binary_harness(harness_name, path)
+        except HarnessError as exc:
+            print(f"  \033[31m{exc}\033[0m")
+            sys.exit(1)
+        return
+
     launch_cockpit_entry(
-        enrich_cockpit_entry(cockpit),
+        cockpit,
         mode,
         launch_target=launch_target,
         build_claude_cmd=build_claude_cmd,
@@ -895,10 +957,16 @@ def run_tui(reg):
         print(f"  \033[90m{type(app._exception).__name__}: {app._exception}\033[0m\n")
 
     if selected_cockpit[0]:
+        target = selected_launch_target[0]
+        remote = bool(selected_cockpit[0].get("remote")) or (
+            target and not is_local_target(target)
+        )
+        chosen_harness = None if remote else pick_harness_menu()
         launch_cockpit(
             selected_cockpit[0],
             selected_mode[0],
-            launch_target=selected_launch_target[0],
+            launch_target=target,
+            harness=chosen_harness,
         )
 
 
@@ -939,7 +1007,7 @@ def cmd_list(reg):
         print()
 
     print(f"  \033[90m{len(cockpits)} cockpits registered\033[0m")
-    print(f"  \033[90mOpen: cockpit <name>  |  Auto mode: -a  |  Bypass: -y  |  All have Shift+Tab auto\033[0m")
+    print(f"  \033[90mOpen: cockpit <name>  |  Auto: -a  |  Bypass: -y  |  Harness: --harness deepseek|dsh|claude-code|grok|…\033[0m")
     print()
 
 
@@ -1867,6 +1935,7 @@ def cmd_doctor():
         ("git", ["git", "--version"]),
         ("gh", ["gh", "--version"]),
         ("claude", ["claude", "--version"]),
+        ("paseo", ["paseo", "--version"]),
     ]
 
     all_ok = True
@@ -1914,7 +1983,7 @@ def cmd_doctor():
         print(f"  \033[32mAll good.\033[0m")
     else:
         print(f"  \033[33mSome tools missing — cockpit will work but with reduced features.\033[0m")
-        print(f"  \033[90mgit: required  |  gh: needed for --github  |  claude: needed to launch cockpits\033[0m")
+        print(f"  \033[90mgit: required  |  gh: needed for --github  |  claude: default harness  |  paseo: deepseek/dsh\033[0m")
 
     print()
     print("  \033[1mFlight deck\033[0m")
@@ -1935,6 +2004,11 @@ def cmd_doctor():
                 print("  \033[31m✗\033[0m Cyprus doctor failed")
         except Exception as exc:
             print(f"  \033[33m!\033[0m Cyprus doctor: {exc}")
+    dsh_ok, dsh_err = check_paseo_dsh_ready()
+    if dsh_ok:
+        print("  \033[32m✓\033[0m DeepSeek via Paseo (provider dsh)")
+    else:
+        print(f"  \033[33m!\033[0m DeepSeek/Paseo: {dsh_err.splitlines()[0]}")
     print()
 
 
@@ -2030,10 +2104,15 @@ def _main():
     elif command in ("-h", "--help", "help"):
         print(__doc__)
     else:
-        # Direct open: cockpit <name> [-a|-y]
+        # Direct open: cockpit <name> [-a|-y] [--harness NAME]
         mode = None
+        try:
+            harness, leftover = parse_harness_args(args)
+        except HarnessError as exc:
+            print(f"  \033[31m{exc}\033[0m")
+            sys.exit(1)
         name_parts = []
-        for a in args:
+        for a in leftover:
             if a in ("-a", "--auto"):
                 mode = "auto"
             elif a in ("-y", "--yolo"):
@@ -2044,7 +2123,7 @@ def _main():
         if name:
             c = find_cockpit(reg, name)
             if c:
-                launch_cockpit(c, mode)
+                launch_cockpit(c, mode, harness=harness)
             else:
                 print(f"  \033[31mNot found:\033[0m {name}")
                 print(f"  Run: cockpit list")
