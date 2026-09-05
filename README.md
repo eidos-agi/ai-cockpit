@@ -85,7 +85,8 @@ The `cockpit` command manages your fleet of cockpits:
 | Command | What |
 |---------|------|
 | `cockpit` | Interactive TUI selector |
-| `cockpit <name>` | Launch a cockpit in Claude Code |
+| `cockpit <name>` | Launch a cockpit in Claude Code (default harness) |
+| `cockpit <name> --harness deepseek` | Launch DeepSeek through Paseo provider `dsh` (alias: `dsh`) |
 | `cockpit new <path>` | Scaffold a new cockpit from the template |
 | `cockpit can-i-close` | Check all cockpits for uncommitted work (alias: `cic`) |
 | `cockpit touch-and-go` | Commit & push all dirty cockpits (alias: `tag`) |
@@ -98,6 +99,30 @@ The `cockpit` command manages your fleet of cockpits:
 | `cockpit version` | Show version |
 
 Every command supports `--help`.
+
+### Harnesses
+
+`cockpit <name>` defaults to Claude Code. Pass `--harness` (or `-H`) to launch a different coding agent in that cockpit directory:
+
+| Harness | Aliases | How it launches |
+|---------|---------|-----------------|
+| `claude-code` | `claude` | `claude` (existing settings / `-a` / `-y`) |
+| `grok` | | `grok` on PATH |
+| `codex` | | `codex` on PATH |
+| `cursor-agent` | `cursor` | `cursor-agent` on PATH |
+| `eidos-harness` | `eidos` | `eidos-harness` on PATH |
+| `hermes` | | `hermes` on PATH |
+| `deepseek` | `dsh` | **Paseo** — `paseo run --provider dsh --cwd <cockpit>` then `paseo attach <agentId>` |
+| `none` | | Print the path; do not start an agent |
+
+DeepSeek is not launched as a raw `dsh` binary or the old `http://127.0.0.1:3080` web UI. Readiness is hang-safe: `paseo` on PATH, `dsh` in `~/.paseo/config.json`, then a short-timeout `paseo provider ls`. Cockpit does **not** run `paseo provider diagnostic dsh` (that command can hang forever while the provider STATUS is `loading`). If `paseo` or the `dsh` provider is missing, cockpit prints a clear install hint:
+
+```bash
+npm install dsh-acp-paseo
+~/.local/lib/dsh-acp-paseo/node_modules/.bin/dsh-acp-paseo-install-provider
+```
+
+The interactive TUI asks for a harness after you pick a cockpit. `COCKPIT_HARNESS` can set the default for `cockpit <name>` when `--harness` is omitted.
 
 ## What's Included
 

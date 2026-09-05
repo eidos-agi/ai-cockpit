@@ -15,7 +15,6 @@ LOCAL_MACHINE_IDS = frozenset({"daniel-laptop-01", "local", "laptop"})
 CONDUIT_SEARCH = [
     Path.home() / "repos-personal" / "conduit" / "scripts" / "conduit",
     Path.home() / "repos-personal" / "conduit" / "scripts" / "conduit.py",
-    Path("/Users/dshanklin/repos-personal/conduit/scripts/conduit"),
 ]
 
 GREENMARK_LAUNCH_TARGETS = [
@@ -249,11 +248,12 @@ def launch_mux_remote(cockpit: dict[str, Any], mode: str | None = None) -> None:
     inner = f"{REMOTE_PATH_EXPORT}; claude {perm} {shlex.quote(prompt)}"
     # Create detached, register into the container plane (best-effort), then attach.
     # If the session already exists, new-session fails quietly and we reattach.
+    chat_desc = f"cockpit chat: {cockpit['name']}"
     tmux_cmd = (
         f"{REMOTE_PATH_EXPORT}; "
         f"tmux new-session -d -s {shlex.quote(session)} {shlex.quote(inner)} 2>/dev/null; "
         f"{shlex.quote(container_cli)} register {shlex.quote(session)} {shlex.quote(session)} "
-        f"-d {shlex.quote(f'cockpit chat: {cockpit['name']}')} >/dev/null 2>&1; "
+        f"-d {shlex.quote(chat_desc)} >/dev/null 2>&1; "
         f"exec tmux attach -t {shlex.quote(session)}"
     )
     where = f"locally ({host})" if is_local_host(host) else f"on \033[1m{host}\033[0m"
