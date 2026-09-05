@@ -11,6 +11,7 @@
 
 ### Fixes
 - Removed hardcoded `/Users/dshanklin/...` conduit path; search is home-relative (`~/repos-personal/conduit/...`) plus `PATH`
+- Mux chat tmux description no longer uses a nested same-quote f-string (SyntaxError on Python 3.10)
 
 ## v0.5.0 — 2026-06-26
 
