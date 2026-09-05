@@ -214,7 +214,9 @@ def parse_paseo_run_agent_id(output: str | None) -> str | None:
         )
         if match:
             return match.group(1)
-        if re.fullmatch(r"[A-Za-z0-9_-]{4,}", line):
+        # Quiet mode prints the bare id. Require a digit or separator so words
+        # like "started" are not treated as agent ids.
+        if re.fullmatch(r"[A-Za-z0-9_-]{4,}", line) and re.search(r"[\d_-]", line):
             return line
     return None
 

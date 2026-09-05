@@ -111,6 +111,7 @@ def test_parse_paseo_run_agent_id_formats():
     assert parse_paseo_run_agent_id("Started agent id: sess_1") == "sess_1"
     assert parse_paseo_run_agent_id("") is None
     assert parse_paseo_run_agent_id(None) is None
+    assert parse_paseo_run_agent_id("started\n") is None
 
 
 def test_launch_deepseek_via_paseo_success():
