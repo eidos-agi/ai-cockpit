@@ -1,6 +1,7 @@
 """DeepSeek / Paseo launch path — provider config, readiness, argv, attach."""
 
 import json
+import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -10,13 +11,18 @@ from ai_cockpit.harness import (
     DSH_INSTALL_HINT,
     DSH_PROVIDER_ID,
     HARNESS_BINARIES,
+    PASEO_PROVIDER_LS_TIMEOUT_SEC,
+    PASEO_RUN_TIMEOUT_SEC,
     HarnessError,
+    _dsh_listed_in_provider_ls,
     _dsh_provider_in_paseo_config,
     build_paseo_dsh_run_argv,
     check_paseo_dsh_ready,
     launch_deepseek_via_paseo,
     parse_paseo_run_agent_id,
+    paseo_provider_diagnostic_argv,
     resolve_harness,
+    run_paseo_timed,
 )
 
 
@@ -84,13 +90,77 @@ def test_check_paseo_dsh_ready_missing_provider():
     assert DSH_INSTALL_HINT.splitlines()[0] in err
 
 
+def _ok_which(name):
+    return "/usr/bin/paseo" if name == "paseo" else None
+
+
+def _ls_runner(stdout="dsh  DSH / DeepSeek Harness  Enabled\n"):
+    calls = []
+
+    def runner(argv, **kwargs):
+        calls.append({"argv": list(argv), "timeout": kwargs.get("timeout")})
+        return SimpleNamespace(returncode=0, stdout=stdout, stderr="")
+
+    runner.calls = calls  # type: ignore[attr-defined]
+    return runner
+
+
 def test_check_paseo_dsh_ready_ok():
+    runner = _ls_runner()
     ok, err = check_paseo_dsh_ready(
-        which=lambda name: "/usr/bin/paseo" if name == "paseo" else None,
+        which=_ok_which,
         config=_dsh_config(),
+        runner=runner,
     )
     assert ok is True
     assert err == ""
+    assert runner.calls[0]["argv"][:3] == ["paseo", "provider", "ls"]
+    assert runner.calls[0]["timeout"] == PASEO_PROVIDER_LS_TIMEOUT_SEC
+    assert all("diagnostic" not in c["argv"] for c in runner.calls)
+
+
+def test_check_paseo_dsh_ready_never_calls_diagnostic():
+    """Mac: `paseo provider diagnostic dsh` hangs past 8s even when ls is fine."""
+    runner = _ls_runner()
+    check_paseo_dsh_ready(which=_ok_which, config=_dsh_config(), runner=runner)
+    invoked = [c["argv"] for c in runner.calls]
+    assert paseo_provider_diagnostic_argv() not in invoked
+    assert not any("diagnostic" in argv for argv in invoked)
+
+
+def test_check_paseo_dsh_ready_ls_timeout_nonfatal():
+    def runner(argv, **kwargs):
+        raise subprocess.TimeoutExpired(cmd=argv, timeout=kwargs.get("timeout", 5))
+
+    ok, err = check_paseo_dsh_ready(
+        which=_ok_which,
+        config=_dsh_config(),
+        runner=runner,
+        ls_timeout=0.05,
+    )
+    assert ok is True
+    assert err == ""
+
+
+def test_run_paseo_timed_timeout_does_not_block():
+    def runner(argv, **kwargs):
+        raise subprocess.TimeoutExpired(cmd=argv, timeout=kwargs.get("timeout", 1))
+
+    stdout, stderr, rc = run_paseo_timed(
+        ["paseo", "provider", "diagnostic", "dsh"],
+        timeout=0.05,
+        runner=runner,
+    )
+    assert rc == "timeout"
+    assert stdout == ""
+
+
+def test_dsh_listed_in_provider_ls():
+    assert _dsh_listed_in_provider_ls("dsh  DSH / DeepSeek Harness  Enabled") is True
+    assert _dsh_listed_in_provider_ls('{"id": "dsh", "enabled": true}') is True
+    assert _dsh_listed_in_provider_ls('[{"id": "claude"}]') is False
+    assert _dsh_listed_in_provider_ls("dshanklin  Enabled") is False
+    assert _dsh_listed_in_provider_ls("") is False
 
 
 def test_build_paseo_dsh_run_argv():
@@ -187,3 +257,20 @@ def test_launch_deepseek_via_paseo_no_agent_id():
             which=lambda name: "/bin/paseo" if name == "paseo" else None,
             config=_dsh_config(),
         )
+
+
+def test_launch_deepseek_via_paseo_run_timeout():
+    def runner(argv, **kwargs):
+        if argv[:3] == ["paseo", "provider", "ls"]:
+            return SimpleNamespace(returncode=0, stdout="dsh  Enabled\n", stderr="")
+        raise subprocess.TimeoutExpired(cmd=argv, timeout=kwargs.get("timeout", 30))
+
+    with pytest.raises(HarnessError, match="timed out"):
+        launch_deepseek_via_paseo(
+            "/tmp/c",
+            runner=runner,
+            attach=lambda _: None,
+            which=_ok_which,
+            config=_dsh_config(),
+        )
+    assert PASEO_RUN_TIMEOUT_SEC >= 1

@@ -115,7 +115,7 @@ Every command supports `--help`.
 | `deepseek` | `dsh` | **Paseo** — `paseo run --provider dsh --cwd <cockpit>` then `paseo attach <agentId>` |
 | `none` | | Print the path; do not start an agent |
 
-DeepSeek is not launched as a raw `dsh` binary or the old `http://127.0.0.1:3080` web UI. If `paseo` or the `dsh` provider is missing, cockpit prints a clear install hint:
+DeepSeek is not launched as a raw `dsh` binary or the old `http://127.0.0.1:3080` web UI. Readiness is hang-safe: `paseo` on PATH, `dsh` in `~/.paseo/config.json`, then a short-timeout `paseo provider ls`. Cockpit does **not** run `paseo provider diagnostic dsh` (that command can hang forever while the provider STATUS is `loading`). If `paseo` or the `dsh` provider is missing, cockpit prints a clear install hint:
 
 ```bash
 npm install dsh-acp-paseo

@@ -5,6 +5,7 @@
 ### Harnesses
 - **`--harness` / `-H`** — launch a cockpit with claude-code, grok, codex, cursor-agent, eidos-harness, hermes, deepseek, or none
 - **DeepSeek via Paseo** — `cockpit <name> --harness deepseek` (alias `dsh`) runs `paseo run --provider dsh --cwd <cockpit>` then `paseo attach <agentId>`. Clear errors when paseo or the `dsh` provider is missing, with the `dsh-acp-paseo` install hint. DeepSeek is not a raw `dsh` binary and no longer uses the localhost:3080 web UI
+- **Hang-safe Paseo readiness** — `check_paseo_dsh_ready` uses PATH + `~/.paseo/config.json` `agents.providers.dsh`, then a timed `paseo provider ls` (5s). It never calls `paseo provider diagnostic dsh` (hangs on 0.7.0-beta.1 when STATUS=loading). `paseo run` also has a hard timeout. A probe hang is non-fatal when config already lists `dsh`
 - **TUI harness menu** — after picking a cockpit, choose the harness before launch
 - **`cockpit doctor`** — reports paseo + DeepSeek/Paseo provider readiness
 

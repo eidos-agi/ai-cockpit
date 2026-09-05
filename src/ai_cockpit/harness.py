@@ -78,9 +78,86 @@ DSH_INSTALL_HINT = (
 
 PASEO_INSTALL_HINT = "Install Paseo CLI: npm install -g @getpaseo/cli"
 
+# Mac (Paseo 0.7.0-beta.1): `paseo provider ls` returns in <1s and lists dsh.
+# `paseo provider diagnostic dsh` hangs indefinitely (STATUS=loading) even when
+# the daemon is healthy. Readiness must never use diagnostic on the happy path.
+PASEO_PROVIDER_LS_TIMEOUT_SEC = 5
+PASEO_DIAGNOSTIC_TIMEOUT_SEC = 8
+PASEO_RUN_TIMEOUT_SEC = 30
+
 
 class HarnessError(RuntimeError):
     """User-facing harness launch failure."""
+
+
+def run_paseo_timed(
+    argv: list[str],
+    *,
+    timeout: float,
+    runner: Callable[..., Any] | None = None,
+) -> tuple[str, str, int | str]:
+    """Run a Paseo argv with a hard timeout.
+
+    Returns (stdout, stderr, returncode). On hang, returncode is ``"timeout"``
+    instead of blocking. Always pass ``timeout`` — never call diagnostic/ls/run
+    without one.
+    """
+    run = runner or subprocess.run
+    try:
+        proc = run(argv, capture_output=True, text=True, timeout=timeout)
+    except FileNotFoundError:
+        return "", "paseo not found", 127
+    except subprocess.TimeoutExpired as exc:
+        stdout = exc.stdout
+        stderr = exc.stderr
+        if isinstance(stdout, bytes):
+            stdout = stdout.decode("utf-8", errors="replace")
+        if isinstance(stderr, bytes):
+            stderr = stderr.decode("utf-8", errors="replace")
+        return (stdout or "", stderr or "", "timeout")
+    return (
+        getattr(proc, "stdout", "") or "",
+        getattr(proc, "stderr", "") or "",
+        getattr(proc, "returncode", 1),
+    )
+
+
+def _dsh_listed_in_provider_ls(text: str) -> bool:
+    """True when ``paseo provider ls`` output names provider id ``dsh``."""
+    if not text:
+        return False
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        data = None
+    items: list[Any] = []
+    if isinstance(data, list):
+        items = data
+    elif isinstance(data, dict):
+        raw = data.get("providers") or data.get("items") or data.get("data")
+        if isinstance(raw, list):
+            items = raw
+        elif isinstance(data.get("id"), str):
+            items = [data]
+    for item in items:
+        if isinstance(item, str) and item.strip().lower() == DSH_PROVIDER_ID:
+            return True
+        if isinstance(item, dict):
+            ident = item.get("id") or item.get("provider") or item.get("name") or ""
+            if str(ident).strip().lower() == DSH_PROVIDER_ID:
+                return True
+    for line in text.splitlines():
+        tokens = re.split(r"[\s|/]+", line.strip())
+        if tokens and tokens[0].lower() == DSH_PROVIDER_ID:
+            return True
+        if re.search(r"(?:^|[\s|:,])dsh(?:[\s|/,]|$)", line, flags=re.IGNORECASE):
+            return True
+    return False
+
+
+def paseo_provider_diagnostic_argv() -> list[str]:
+    """Unsafe on Paseo 0.7.0-beta.1 — hangs. Not used by check_paseo_dsh_ready."""
+    return ["paseo", "provider", "diagnostic", DSH_PROVIDER_ID]
 
 
 def supported_harness_names() -> list[str]:
@@ -153,8 +230,21 @@ def check_paseo_dsh_ready(
     *,
     which: Callable[[str], str | None] | None = None,
     config: dict[str, Any] | str | Path | None = None,
+    runner: Callable[..., Any] | None = None,
+    ls_timeout: float = PASEO_PROVIDER_LS_TIMEOUT_SEC,
 ) -> tuple[bool, str]:
-    """Return (ok, error). Error is empty when ready."""
+    """Return (ok, error). Error is empty when ready.
+
+    Happy path (never calls ``paseo provider diagnostic``, which hangs when
+    STATUS=loading on Paseo 0.7.0-beta.1):
+
+    1. ``paseo`` on PATH
+    2. ``dsh`` present and enabled in ``~/.paseo/config.json`` (or ``PASEO_HOME``)
+    3. Optional soft signal: ``paseo provider ls`` with a hard timeout
+
+    A hang/timeout on ``provider ls`` is non-fatal when the config already
+    lists ``dsh``. Diagnostic is never invoked here.
+    """
     which = which or shutil.which
     if not which("paseo"):
         return False, f"paseo not found on PATH. {PASEO_INSTALL_HINT}"
@@ -162,6 +252,23 @@ def check_paseo_dsh_ready(
         return False, (
             f"Paseo provider '{DSH_PROVIDER_ID}' is not configured.\n{DSH_INSTALL_HINT}"
         )
+
+    stdout, stderr, rc = run_paseo_timed(
+        ["paseo", "provider", "ls"],
+        timeout=ls_timeout,
+        runner=runner,
+    )
+    if rc == "timeout":
+        # Config already has dsh. ls hang is a soft signal, not a blocker —
+        # same class of Paseo stuck-loading bug as diagnostic, just rarer.
+        return True, ""
+    if rc == 0 and (stdout or stderr) and not _dsh_listed_in_provider_ls(
+        f"{stdout}\n{stderr}"
+    ):
+        # ls succeeded but did not name dsh. Config still wins (install-provider
+        # writes agents.providers.dsh); treat as ready so a parser miss cannot
+        # block launch. Doctor can still show paseo present.
+        return True, ""
     return True, ""
 
 
@@ -231,17 +338,26 @@ def launch_deepseek_via_paseo(
     config: dict[str, Any] | str | Path | None = None,
 ) -> str:
     """Start a Paseo ``dsh`` agent in ``cwd`` and attach. Returns the agent id."""
-    ok, err = check_paseo_dsh_ready(which=which, config=config)
+    ok, err = check_paseo_dsh_ready(which=which, config=config, runner=runner)
     if not ok:
         raise HarnessError(err)
 
     run_argv = build_paseo_dsh_run_argv(cwd, task=task)
-    run = runner or subprocess.run
-    proc = run(run_argv, capture_output=True, text=True)
-    stdout = getattr(proc, "stdout", "") or ""
-    stderr = getattr(proc, "stderr", "") or ""
-    if getattr(proc, "returncode", 1) != 0:
-        detail = (stderr or stdout).strip() or f"exit {proc.returncode}"
+    stdout, stderr, rc = run_paseo_timed(
+        run_argv,
+        timeout=PASEO_RUN_TIMEOUT_SEC,
+        runner=runner,
+    )
+    if rc == "timeout":
+        raise HarnessError(
+            f"paseo run --provider {DSH_PROVIDER_ID} timed out after "
+            f"{PASEO_RUN_TIMEOUT_SEC}s (provider may be stuck loading).\n"
+            "This is not the old dsh web UI (http://127.0.0.1:3080). "
+            "Try `paseo provider ls` — do not run `paseo provider diagnostic dsh` "
+            f"(known hang on Paseo 0.7.x). {DSH_INSTALL_HINT}"
+        )
+    if rc != 0:
+        detail = (stderr or stdout).strip() or f"exit {rc}"
         raise HarnessError(f"paseo run --provider {DSH_PROVIDER_ID} failed:\n{detail}")
 
     agent_id = parse_paseo_run_agent_id(stdout) or parse_paseo_run_agent_id(stderr)
